@@ -2,7 +2,8 @@ import React, { Suspense } from "react";
 import { 
   createBrowserRouter, 
   RouterProvider, 
-  Navigate 
+  Navigate,
+  useRouteError
 } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
@@ -95,6 +96,14 @@ function GlobalLoadingSpinner({ message }: { message: string }) {
 
 // Global Error Boundary Fallback
 function GlobalErrorBoundary() {
+  const routeError = useRouteError() as any;
+  console.error("GlobalErrorBoundary caught an error:", routeError);
+  const errorMessage = 
+    routeError?.message || 
+    routeError?.statusText || 
+    (typeof routeError === "string" ? routeError : null) || 
+    "An unexpected issue was encountered while rendering this component.";
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4 font-sans">
       <div className="max-w-md w-full text-center space-y-4 bg-card p-8 rounded-2xl shadow-xl border border-destructive/20">
@@ -103,7 +112,7 @@ function GlobalErrorBoundary() {
         </div>
         <h2 className="text-lg font-black uppercase tracking-tight text-foreground">Operational Interrupt</h2>
         <p className="text-xs text-muted-foreground font-medium leading-relaxed">
-          An unexpected issue was encountered while rendering this component.
+          {errorMessage}
         </p>
         <Button 
           onClick={() => window.location.reload()} 
