@@ -36,7 +36,50 @@ import { useStaffRoster } from "@/lib/staffRoster";
 
 const BRAND_OPTIONS = ["Samsung", "Apple", "Realme", "Vivo", "Oppo", "Xiaomi", "Motorola", "OnePlus", "Google", "Nokia", "Asus", "Sony", "Huawei", "Honor", "Nothing", "Poco", "IQOO", "Dell", "HP", "Lenovo", "Acer", "MSI", "Microsoft", "Razer", "Gigabyte", "LG", "Fujitsu", "Panasonic", "Toshiba", "Other"];
 const ACCESSORIES_OPTIONS = ["Charger", "Adapter", "Battery", "Mouse", "Keyboard", "Laptop Bag", "SIM", "Memory Card", "Stylus", "Hard Disk", "SSD", "RAM", "Other"];
-const PRESET_COMPLAINTS = ["Display", "CC", "Battery", "IC", "Waterlock", "Motherboard", "Camera", "Flashing", "Repaste", "Other"];
+
+const MOBILE_PRESET_COMPLAINTS = [
+  "Dead",
+  "Display",
+  "CC",
+  "Battery",
+  "IC",
+  "Waterlock",
+  "Motherboard",
+  "Camera",
+  "Flashing",
+  "Repaste",
+  "Other"
+];
+
+const LAPTOP_PRESET_COMPLAINTS = [
+  "Dead",
+  "No Display",
+  "Battery",
+  "Keyboard",
+  "Motherboard",
+  "Charging Port / CC",
+  "Hinges / Body",
+  "OS / Software",
+  "Repaste / Overheating",
+  "Other"
+];
+
+const PC_PRESET_COMPLAINTS = [
+  "Dead",
+  "No Display",
+  "SMPS / Power",
+  "Motherboard",
+  "RAM / Storage",
+  "OS / Software",
+  "Repaste / Overheating",
+  "Other"
+];
+
+const getDevicePresets = (deviceType: string) => {
+  if (deviceType === "Laptop") return LAPTOP_PRESET_COMPLAINTS;
+  if (deviceType === "PC") return PC_PRESET_COMPLAINTS;
+  return MOBILE_PRESET_COMPLAINTS;
+};
 
 export default function ServiceJobForm() {
   const { id } = useParams<{ id: string }>();
@@ -60,8 +103,8 @@ export default function ServiceJobForm() {
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
   const [submittedJobData, setSubmittedJobData] = useState<any>(null);
 
-  // States for Mobile Complaint Selector
-  const [mobileComplaintType, setMobileComplaintType] = useState<string>("");
+  // States for Complaint Selector
+  const [selectedComplaintPreset, setSelectedComplaintPreset] = useState<string>("");
   const [waterlockExtras, setWaterlockExtras] = useState<string[]>([]);
 
   const { register, handleSubmit, control, setValue, watch, reset, formState: { errors } } = useForm<ServiceJobFormValues>({
@@ -133,20 +176,22 @@ export default function ServiceJobForm() {
         billedBy: (existingJob as any).billed_by || "Suresh"
       });
       
-      // Initialize Mobile Complaint State if it matches a preset
-      if ((existingJob as any).device_type === "Mobile" || existingJob.deviceType === "Mobile") {
-        const comp = (existingJob as any).complaint || "";
-        if (comp.startsWith("Waterlock")) {
-          setMobileComplaintType("Waterlock");
-          const extras: string[] = [];
-          if (comp.toLowerCase().includes("display")) extras.push("Display");
-          if (comp.toLowerCase().includes("cc")) extras.push("CC");
-          if (comp.toLowerCase().includes("battery")) extras.push("Battery");
-          setWaterlockExtras(extras);
-        } else if (["Display", "CC", "Battery", "IC", "Motherboard", "Camera", "Flashing", "Repaste"].includes(comp)) {
-          setMobileComplaintType(comp);
+      // Initialize Complaint Preset State if it matches a preset
+      const device = (existingJob as any).device_type || existingJob.deviceType || "Mobile";
+      const comp = (existingJob as any).complaint || "";
+      if (comp.startsWith("Waterlock")) {
+        setSelectedComplaintPreset("Waterlock");
+        const extras: string[] = [];
+        if (comp.toLowerCase().includes("display")) extras.push("Display");
+        if (comp.toLowerCase().includes("cc")) extras.push("CC");
+        if (comp.toLowerCase().includes("battery")) extras.push("Battery");
+        setWaterlockExtras(extras);
+      } else {
+        const presets = getDevicePresets(device);
+        if (presets.filter(p => p !== "Other").includes(comp)) {
+          setSelectedComplaintPreset(comp);
         } else if (comp) {
-          setMobileComplaintType("Other");
+          setSelectedComplaintPreset("Other");
         }
       }
     }
@@ -165,20 +210,18 @@ export default function ServiceJobForm() {
     currentComplaint.toLowerCase().includes("cc")
   );
 
-  // Sync Mobile Complaint State to Form Value
+  // Sync Complaint State to Form Value
   useEffect(() => {
-    if (currentDeviceType === "Mobile") {
-      if (mobileComplaintType === "Waterlock") {
-        let text = "Waterlock";
-        if (waterlockExtras.length > 0) {
-          text += ` (${waterlockExtras.join(", ")})`;
-        }
-        setValue("complaint", text, { shouldValidate: true });
-      } else if (mobileComplaintType && mobileComplaintType !== "Other") {
-        setValue("complaint", mobileComplaintType, { shouldValidate: true });
+    if (currentDeviceType === "Mobile" && selectedComplaintPreset === "Waterlock") {
+      let text = "Waterlock";
+      if (waterlockExtras.length > 0) {
+        text += ` (${waterlockExtras.join(", ")})`;
       }
+      setValue("complaint", text, { shouldValidate: true });
+    } else if (selectedComplaintPreset && selectedComplaintPreset !== "Other") {
+      setValue("complaint", selectedComplaintPreset, { shouldValidate: true });
     }
-  }, [mobileComplaintType, waterlockExtras, currentDeviceType, setValue]);
+  }, [selectedComplaintPreset, waterlockExtras, currentDeviceType, setValue]);
 
   // Reactive financial calculations
   const estAmt = Number(watch("estimatedAmount") || 0);
@@ -500,7 +543,14 @@ export default function ServiceJobForm() {
                     <button
                       key={type}
                       type="button"
-                      onClick={() => setValue("deviceType", type, { shouldValidate: true })}
+                      onClick={() => {
+                        setValue("deviceType", type, { shouldValidate: true });
+                        const newPresets = getDevicePresets(type);
+                        if (selectedComplaintPreset && !newPresets.includes(selectedComplaintPreset)) {
+                          setSelectedComplaintPreset("");
+                          setValue("complaint", "", { shouldValidate: false });
+                        }
+                      }}
                       className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
                         isSelected
                           ? "bg-primary text-primary-foreground shadow-sm shadow-primary/30"
@@ -592,71 +642,70 @@ export default function ServiceJobForm() {
                   Customer Complaint / Reported Problem <span className="text-rose-500">*</span>
                 </label>
 
-                {currentDeviceType === "Mobile" ? (
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap gap-1.5">
-                      {PRESET_COMPLAINTS.map((c) => {
-                        const isSelected = mobileComplaintType === c;
-                        return (
+                <div className="space-y-3">
+                  {/* Preset Shortcut Chips */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {getDevicePresets(currentDeviceType).map((c) => {
+                      const isSelected = selectedComplaintPreset === c;
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => {
+                            setSelectedComplaintPreset(c);
+                            if (c !== "Other" && c !== "Waterlock") {
+                              setValue("complaint", c, { shouldValidate: true });
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all select-none ${
+                            isSelected
+                              ? "bg-indigo-600 text-white shadow-sm shadow-indigo-500/25 scale-[1.02]"
+                              : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted border border-border/60"
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Waterlock Additional Sub-issues for Mobile */}
+                  {currentDeviceType === "Mobile" && selectedComplaintPreset === "Waterlock" && (
+                    <div className="p-3 bg-blue-50/50 dark:bg-blue-950/20 rounded-xl border border-blue-200 dark:border-blue-900/40 space-y-2 animate-fadeIn">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 block">
+                        Waterlock Damaged Sub-parts:
+                      </span>
+                      <div className="flex gap-2">
+                        {["Display", "CC", "Battery"].map((extra) => (
                           <button
-                            key={c}
+                            key={extra}
                             type="button"
-                            onClick={() => setMobileComplaintType(c)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all select-none ${
-                              isSelected
-                                ? "bg-indigo-600 text-white shadow-sm shadow-indigo-500/25"
-                                : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted border border-border/60"
+                            onClick={() => handleWaterlockExtraToggle(extra)}
+                            className={`text-xs px-3 py-1 rounded-lg font-bold transition-all ${
+                              waterlockExtras.includes(extra)
+                                ? "bg-blue-600 text-white shadow-xs"
+                                : "bg-card border border-border text-muted-foreground hover:bg-muted"
                             }`}
                           >
-                            {c}
+                            + {extra}
                           </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Waterlock Additional Sub-issues */}
-                    {mobileComplaintType === "Waterlock" && (
-                      <div className="p-3 bg-blue-50/50 dark:bg-blue-950/20 rounded-xl border border-blue-200 dark:border-blue-900/40 space-y-2 animate-fadeIn">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 block">
-                          Waterlock Damaged Sub-parts:
-                        </span>
-                        <div className="flex gap-2">
-                          {["Display", "CC", "Battery"].map((extra) => (
-                            <button
-                              key={extra}
-                              type="button"
-                              onClick={() => handleWaterlockExtraToggle(extra)}
-                              className={`text-xs px-3 py-1 rounded-lg font-bold transition-all ${
-                                waterlockExtras.includes(extra)
-                                  ? "bg-blue-600 text-white shadow-xs"
-                                  : "bg-card border border-border text-muted-foreground hover:bg-muted"
-                              }`}
-                            >
-                              + {extra}
-                            </button>
-                          ))}
-                        </div>
+                        ))}
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {mobileComplaintType === "Other" && (
-                      <textarea
-                        {...register("complaint")}
-                        placeholder="Detail the defect or service request..."
-                        className="w-full border border-input rounded-xl p-3 text-xs bg-background h-24 outline-none focus:ring-2 focus:ring-primary/40"
-                      />
-                    )}
-                    {mobileComplaintType !== "Other" && (
-                      <input type="hidden" {...register("complaint")} />
-                    )}
-                  </div>
-                ) : (
-                  <textarea
-                    {...register("complaint")}
-                    placeholder="Describe the issue reported by the customer..."
-                    className="w-full border border-input rounded-xl p-3 text-xs bg-background h-24 outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                )}
+                  {/* Custom complaint input if 'Other' is selected */}
+                  {selectedComplaintPreset === "Other" && (
+                    <textarea
+                      {...register("complaint")}
+                      placeholder="Detail the defect or service request..."
+                      className="w-full border border-input rounded-xl p-3 text-xs bg-background h-24 outline-none focus:ring-2 focus:ring-primary/40 animate-fadeIn"
+                    />
+                  )}
+                  {selectedComplaintPreset !== "Other" && (
+                    <input type="hidden" {...register("complaint")} />
+                  )}
+                </div>
                 {errors.complaint && (
                   <p className="text-[10px] text-rose-500 font-medium mt-1">{errors.complaint.message}</p>
                 )}
