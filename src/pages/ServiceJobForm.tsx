@@ -3,9 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useForm, useWatch } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { localDB, generateId } from "@/lib/localDB";
+import { localDB } from "@/lib/localDB";
 import { serviceJobSchema, ServiceJobFormValues } from "@/schemas/validationSchema";
 import { useServiceJobs } from "@/hooks/useServiceJobs";
+import { deductInventoryForJob } from "@/lib/inventoryService";
 import { SignatureCanvas } from "@/components/service-job/SignatureCanvas";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -304,35 +305,19 @@ export default function ServiceJobForm() {
   };
 
   const handleStockDeduction = async (data: ServiceJobFormValues) => {
-    if (data.status === "Delivered" && data.sparePartSupplier && consumesStock) {
+    if (data.status === "Delivered") {
       try {
-        const stocks = await localDB.stock.getAll();
-        const cText = data.complaint.toLowerCase();
-        let partName = "";
-        
-        if (cText.includes("display")) partName = "Display";
-        else if (cText.includes("battery")) partName = "Battery";
-        else if (cText.includes("cc")) partName = "CC";
-        
-        if (partName) {
-          const matchIdx = stocks.findIndex((s: any) => s.item === partName && s.buyed_from === data.sparePartSupplier);
-          if (matchIdx !== -1) {
-            stocks[matchIdx].quantity = Math.max(0, stocks[matchIdx].quantity - 1);
-            await localDB.stock.save([stocks[matchIdx]]);
-            toast({ title: "Stock Deducted", description: `1 ${partName} deducted from ${data.sparePartSupplier} inventory.` });
-          } else {
-            const newStock = {
-              id: generateId(),
-              item: partName,
-              buyed_from: data.sparePartSupplier,
-              quantity: -1,
-              supported_model: data.model,
-              box_no: "",
-              created_at: new Date().toISOString()
-            };
-            await localDB.stock.save([newStock]);
-            toast({ title: "Stock Alert", description: `Negative stock entry created for ${partName} (${data.sparePartSupplier}).` });
-          }
+        const result = await deductInventoryForJob({
+          id,
+          brand: data.brand,
+          model: data.model,
+          complaint: data.complaint,
+          spare_part_supplier: data.sparePartSupplier,
+          device_type: data.deviceType
+        });
+        if (result.deducted && result.message) {
+          toast({ title: "Inventory Updated", description: result.message });
+          queryClient.invalidateQueries({ queryKey: ["stocks"] });
         }
       } catch (err) {
         console.error("Stock update failed", err);

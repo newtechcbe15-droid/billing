@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { localDB, generateId } from "@/lib/localDB";
 import { useToast } from "@/hooks/use-toast";
@@ -18,17 +18,13 @@ import {
   ShieldCheck, 
   CheckCircle,
   Clock,
-  ArrowRight,
-  Package,
-  Store
+  ArrowRight
 } from "lucide-react";
 
 import { useStaffRoster } from "@/lib/staffRoster";
+import { deductInventoryForJob, InventoryDeductionResult } from "@/lib/inventoryService";
 
 const WARRANTY_DURATIONS = ["No Warranty", "1 Month", "3 Months", "6 Months", "1 Year"];
-
-const STORAGE_BOXES = Array.from({ length: 50 }, (_, i) => `Box ${i + 1}`);
-const VENDORS = ["Kaveri", "Surya", "Bangalore", "Cell Care", "Local"];
 
 interface DeliveryFormValues {
   amountCollected: number;
@@ -38,8 +34,6 @@ interface DeliveryFormValues {
   splitCashAmount: number;
   splitGPayAmount: number;
   warrantyDuration: string;
-  storageBox?: string;
-  vendorName?: string;
 }
 
 export default function Delivery() {
@@ -101,29 +95,9 @@ export default function Delivery() {
       paymentMethod: "Cash",
       splitCashAmount: 0,
       splitGPayAmount: 0,
-      warrantyDuration: "No Warranty",
-      storageBox: "",
-      vendorName: ""
+      warrantyDuration: "No Warranty"
     }
   });
-
-  const boxOptions = useMemo(() => {
-    const set = new Set<string>(STORAGE_BOXES);
-    const existing = (job as any)?.storage_box || (job as any)?.box_no;
-    if (existing && typeof existing === "string" && existing.trim()) {
-      set.add(existing.trim());
-    }
-    return Array.from(set);
-  }, [job]);
-
-  const vendorOptions = useMemo(() => {
-    const set = new Set<string>(VENDORS);
-    const existing = (job as any)?.spare_part_supplier || (job as any)?.vendor_name;
-    if (existing && typeof existing === "string" && existing.trim()) {
-      set.add(existing.trim());
-    }
-    return Array.from(set);
-  }, [job]);
 
   // Re-hydrate form when job loads, pre-filling remaining balance
   React.useEffect(() => {
@@ -153,9 +127,7 @@ export default function Delivery() {
         paymentMethod: (job.payments?.payment_method as any) || "Cash",
         splitCashAmount: existingSplitCash,
         splitGPayAmount: existingSplitGPay,
-        warrantyDuration: job.warranties?.warranty_duration || "No Warranty",
-        storageBox: (job as any)?.storage_box || (job as any)?.box_no || "",
-        vendorName: (job as any)?.spare_part_supplier || (job as any)?.vendor_name || ""
+        warrantyDuration: job.warranties?.warranty_duration || "No Warranty"
       });
     }
   }, [job, reset]);
@@ -221,19 +193,12 @@ export default function Delivery() {
       const warranties = await localDB.warranties.getAll();
       const today = new Date().toISOString().split("T")[0];
       
-      // 1. Update Job Status & Optional Storage Box / Vendor
+      // 1. Update Job Status
       const jIndex = jobs.findIndex((j: any) => j.id === job.id);
       if (jIndex > -1) {
         jobs[jIndex].status = values.deliveryType;
         jobs[jIndex].delivered_by = values.deliveredBy;
         jobs[jIndex].updated_at = new Date().toISOString();
-        if (values.storageBox !== undefined) {
-          jobs[jIndex].storage_box = values.storageBox.trim();
-        }
-        if (values.vendorName !== undefined) {
-          jobs[jIndex].spare_part_supplier = values.vendorName.trim();
-          jobs[jIndex].vendor_name = values.vendorName.trim();
-        }
         
         if (values.warrantyDuration && values.warrantyDuration !== "No Warranty") {
           const wDate = new Date();
@@ -309,16 +274,45 @@ export default function Delivery() {
         }
       }
       
-      return job.id;
+      // 3. Automatic Inventory Deduction if Delivering Device
+      let stockResult: InventoryDeductionResult | null = null;
+      if (values.deliveryType === "Delivered" && job.status !== "Delivered") {
+        try {
+          stockResult = await deductInventoryForJob({
+            id: job.id,
+            brand: job.brand,
+            model: job.model,
+            complaint: job.complaint,
+            spare_part_supplier: job.spare_part_supplier,
+            device_type: (job as any).device_type || job.deviceType
+          });
+        } catch (stockErr) {
+          console.error("Auto inventory deduction failed:", stockErr);
+        }
+      }
+
+      return { jobId: job.id, stockResult };
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["deliveryJob"] });
       queryClient.invalidateQueries({ queryKey: ["serviceJobs"] });
       queryClient.invalidateQueries({ queryKey: ["pendingDeliveryFeed"] });
       queryClient.invalidateQueries({ queryKey: ["allPayments"] });
       queryClient.invalidateQueries({ queryKey: ["allJobs"] });
       queryClient.invalidateQueries({ queryKey: ["allExpenses"] });
-      toast({ title: "Delivery Processed", description: "Job marked as delivered and collection recorded in ledger." });
+      queryClient.invalidateQueries({ queryKey: ["stocks"] });
+
+      if (result?.stockResult?.deducted && result?.stockResult?.message) {
+        toast({ 
+          title: "Delivered & Inventory Updated", 
+          description: result.stockResult.message 
+        });
+      } else {
+        toast({ 
+          title: "Delivery Processed", 
+          description: "Job marked as delivered and collection recorded in ledger." 
+        });
+      }
       setActiveJobId(null);
       setSearchBill("");
     },
@@ -457,14 +451,7 @@ export default function Delivery() {
                     <div className="p-3 rounded-xl bg-muted/30 border border-border/60 space-y-1">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Service Details</span>
                       <p className="text-xs font-semibold text-foreground truncate">{job.complaint}</p>
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                        <span>Technician: {job.technician_assigned || "Suresh"}</span>
-                        {job.storage_box && (
-                          <span className="font-bold text-primary flex items-center gap-1">
-                            <Package className="w-3 h-3" /> {job.storage_box}
-                          </span>
-                        )}
-                      </div>
+                      <p className="text-[10px] text-muted-foreground">Technician: {job.technician_assigned || "Suresh"}</p>
                     </div>
                   </div>
 
@@ -489,47 +476,6 @@ export default function Delivery() {
                       >
                         {[...staffList, "Unassigned"].map((t) => (
                           <option key={t} value={t}>{t}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Storage Box & Vendor Selection (Optional) */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                    <div>
-                      <label className="text-xs font-semibold block mb-1.5 text-foreground flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                          <Package className="w-3.5 h-3.5 text-primary" />
-                          <span>Storage Box / Bin #</span>
-                        </span>
-                        <span className="text-[10px] text-muted-foreground font-normal">Optional</span>
-                      </label>
-                      <select
-                        {...register("storageBox")}
-                        className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none focus:ring-2 focus:ring-primary/30"
-                      >
-                        <option value="">-- None / No Box --</option>
-                        {boxOptions.map((box) => (
-                          <option key={box} value={box}>{box}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-semibold block mb-1.5 text-foreground flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                          <Store className="w-3.5 h-3.5 text-primary" />
-                          <span>Vendor Name</span>
-                        </span>
-                        <span className="text-[10px] text-muted-foreground font-normal">Optional</span>
-                      </label>
-                      <select
-                        {...register("vendorName")}
-                        className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none focus:ring-2 focus:ring-primary/30"
-                      >
-                        <option value="">-- None / No Vendor --</option>
-                        {vendorOptions.map((v) => (
-                          <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
                     </div>
@@ -718,12 +664,6 @@ export default function Delivery() {
                         <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0">
                           {j.status}
                         </Badge>
-                        {j.storage_box && (
-                          <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 bg-primary/10 text-primary border-primary/20 flex items-center gap-1">
-                            <Package className="w-2.5 h-2.5" />
-                            {j.storage_box}
-                          </Badge>
-                        )}
                       </div>
                       <span className="text-xs font-mono font-bold text-rose-500">
                         ₹{balance.toFixed(2)} due
