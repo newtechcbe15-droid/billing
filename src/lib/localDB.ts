@@ -21,6 +21,29 @@ const createSupabaseHelper = (tableName: string) => ({
       console.error(`Error saving to ${tableName}:`, error);
       throw error;
     }
+  },
+  insert: async (item: any) => {
+    const { data, error } = await supabase.from(tableName).insert(item).select().single();
+    if (error) {
+      console.error(`Error inserting into ${tableName}:`, error);
+      throw error;
+    }
+    return data;
+  },
+  update: async (id: string, updates: any) => {
+    const { data, error } = await supabase.from(tableName).update(updates).eq('id', id).select().maybeSingle();
+    if (error) {
+      console.error(`Error updating in ${tableName}:`, error);
+      throw error;
+    }
+    return data;
+  },
+  delete: async (id: string) => {
+    const { error } = await supabase.from(tableName).delete().eq('id', id);
+    if (error) {
+      console.error(`Error deleting from ${tableName}:`, error);
+      throw error;
+    }
   }
 });
 

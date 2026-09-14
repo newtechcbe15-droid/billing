@@ -120,9 +120,7 @@ export default function RevenueExpenses() {
 
   const deleteExpenseMutation = useMutation({
     mutationFn: async (id: string) => {
-      let expList = await localDB.expenses.getAll();
-      expList = expList.filter((e: any) => e.id !== id);
-      await localDB.expenses.save(expList);
+      await localDB.expenses.delete(id);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allExpenses"] });
@@ -158,9 +156,7 @@ export default function RevenueExpenses() {
 
   const deleteSalaryMutation = useMutation({
     mutationFn: async (id: string) => {
-      let salList = await localDB.salaries.getAll();
-      salList = salList.filter((s: any) => s.id !== id);
-      await localDB.salaries.save(salList);
+      await localDB.salaries.delete(id);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allSalaries"] });

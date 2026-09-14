@@ -15,8 +15,20 @@ import {
   Search, 
   Boxes, 
   AlertTriangle,
-  Box
+  Box,
+  Edit,
+  Loader2,
+  Check,
+  Minus,
+  Plus
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter
+} from "@/components/ui/dialog";
 
 interface StockItem {
   id: string;
@@ -43,6 +55,7 @@ export default function Stock() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [editingItem, setEditingItem] = useState<StockItem | null>(null);
 
   const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<StockFormValues>({
     defaultValues: {
@@ -94,15 +107,43 @@ export default function Stock() {
 
   const deleteStockMutation = useMutation({
     mutationFn: async (id: string) => {
-      const currentStocks = await localDB.stock.getAll();
-      const updated = currentStocks.filter((s: any) => s.id !== id);
-      await localDB.stock.save(updated);
+      await localDB.stock.delete(id);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["stocks"] });
-      toast({ title: "Stock Removed", description: "The item has been removed from the inventory list." });
+      toast({ title: "Stock Removed", description: "The item has been deleted from inventory." });
+    },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Delete Failed", description: err.message });
     }
   });
+
+  const updateStockMutation = useMutation({
+    mutationFn: async (updatedItem: StockItem) => {
+      await localDB.stock.update(updatedItem.id, {
+        item: updatedItem.item,
+        buyed_from: updatedItem.buyed_from,
+        quantity: Number(updatedItem.quantity),
+        supported_model: updatedItem.supported_model,
+        box_no: updatedItem.box_no
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["stocks"] });
+      toast({ title: "Stock Updated", description: "Inventory item details saved successfully." });
+      setEditingItem(null);
+    },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Update Failed", description: err.message });
+    }
+  });
+
+  const handleDelete = (id: string, item: string, model?: string) => {
+    const label = model ? `${item} (${model})` : item;
+    if (window.confirm(`Are you sure you want to remove "${label}" from inventory?`)) {
+      deleteStockMutation.mutate(id);
+    }
+  };
 
   const onSubmit = (data: StockFormValues) => {
     addStockMutation.mutate(data);
@@ -351,15 +392,26 @@ export default function Stock() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-center">
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => deleteStockMutation.mutate(s.id)}
-                              className="h-7 w-7 text-muted-foreground hover:text-rose-500 rounded-lg"
-                              title="Delete Item"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => setEditingItem({ ...s })}
+                                className="h-7 w-7 text-muted-foreground hover:text-primary rounded-lg"
+                                title="Edit Stock Item"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleDelete(s.id, s.item, s.supported_model)}
+                                className="h-7 w-7 text-muted-foreground hover:text-rose-500 rounded-lg"
+                                title="Delete Item"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -371,6 +423,141 @@ export default function Stock() {
           </Card>
         </div>
       </div>
+
+      {/* Edit Stock Item Modal Dialog */}
+      {editingItem && (
+        <Dialog open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
+          <DialogContent className="sm:max-w-md rounded-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black uppercase tracking-tight flex items-center gap-2">
+                <Edit className="w-4 h-4 text-primary" /> Update Stock Item
+              </DialogTitle>
+            </DialogHeader>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (editingItem) {
+                  updateStockMutation.mutate(editingItem);
+                }
+              }}
+              className="space-y-4 pt-2"
+            >
+              <div>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
+                  Part Type
+                </label>
+                <select
+                  value={editingItem.item}
+                  onChange={(e) => setEditingItem({ ...editingItem, item: e.target.value })}
+                  className="w-full h-10 px-3 text-xs font-semibold rounded-xl border border-input bg-background"
+                >
+                  {PART_TYPES.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
+                  Supplier / Source
+                </label>
+                <select
+                  value={editingItem.buyed_from}
+                  onChange={(e) => setEditingItem({ ...editingItem, buyed_from: e.target.value })}
+                  className="w-full h-10 px-3 text-xs font-semibold rounded-xl border border-input bg-background"
+                >
+                  {SUPPLIERS.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
+                  Supported Model
+                </label>
+                <Input
+                  value={editingItem.supported_model || ""}
+                  onChange={(e) => setEditingItem({ ...editingItem, supported_model: e.target.value })}
+                  placeholder="e.g. Redmi Note 10 Pro, iPhone 11"
+                  className="h-10 text-xs rounded-xl"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
+                    Box / Bin No
+                  </label>
+                  <Input
+                    value={editingItem.box_no || ""}
+                    onChange={(e) => setEditingItem({ ...editingItem, box_no: e.target.value })}
+                    placeholder="e.g. B-04"
+                    className="h-10 text-xs font-mono rounded-xl"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-1.5">
+                    Units in Stock
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-10 w-10 shrink-0 rounded-xl"
+                      onClick={() => setEditingItem({ ...editingItem, quantity: Math.max(0, Number(editingItem.quantity) - 1) })}
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </Button>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={editingItem.quantity}
+                      onChange={(e) => setEditingItem({ ...editingItem, quantity: Math.max(0, Number(e.target.value)) })}
+                      className="h-10 text-xs font-mono font-bold text-center rounded-xl"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-10 w-10 shrink-0 rounded-xl"
+                      onClick={() => setEditingItem({ ...editingItem, quantity: Number(editingItem.quantity) + 1 })}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter className="pt-3 gap-2 sm:gap-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingItem(null)}
+                  className="h-10 text-xs rounded-xl"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={updateStockMutation.isPending}
+                  className="h-10 px-5 text-xs font-bold gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-md shadow-primary/20"
+                >
+                  {updateStockMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  Save Changes
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
