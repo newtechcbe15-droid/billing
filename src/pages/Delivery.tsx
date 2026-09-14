@@ -209,12 +209,18 @@ export default function Delivery() {
       const warranties = await localDB.warranties.getAll();
       const today = new Date().toISOString().split("T")[0];
       
-      // 1. Update Job Status & Display Replacement Record
+      // 1. Update Job Status & Delivery Remarks
       const jIndex = jobs.findIndex((j: any) => j.id === job.id);
       if (jIndex > -1) {
         jobs[jIndex].status = values.deliveryType;
         jobs[jIndex].delivered_by = values.deliveredBy;
-        jobs[jIndex].display_changed = values.displayChanged;
+        if (values.displayChanged) {
+          const currentRemarks = jobs[jIndex].delivery_remarks || "";
+          if (!currentRemarks.includes("Display Changed")) {
+            jobs[jIndex].delivery_remarks = currentRemarks ? `${currentRemarks} | Display Changed` : "Display Changed";
+          }
+        }
+        delete (jobs[jIndex] as any).display_changed;
         jobs[jIndex].updated_at = new Date().toISOString();
         
         if (values.warrantyDuration && values.warrantyDuration !== "No Warranty") {
