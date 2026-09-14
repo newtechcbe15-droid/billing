@@ -15,7 +15,8 @@ import {
   X,
   Laptop,
   Radio,
-  Plus
+  Plus,
+  CalendarCheck
 } from "lucide-react";
 
 interface SidebarProps {
@@ -78,6 +79,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           path: "/salary",
           icon: Users,
           badge: "Monthly Report"
+        },
+        {
+          name: "Staff Attendance",
+          path: "/attendance",
+          icon: CalendarCheck,
+          badge: "Daily Log"
         },
         {
           name: "Reports & Analytics",

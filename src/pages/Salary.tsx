@@ -19,8 +19,10 @@ import {
   Trash2, 
   BarChart3, 
   Calendar,
-  Loader2
+  Loader2,
+  CalendarCheck
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const TECHNICIANS = [
   "Suresh", 
@@ -238,17 +240,30 @@ export default function Salary() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Page Title */}
-      <div className="flex items-center gap-2 border-b border-border/80 pb-4">
-        <span className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
-        <div>
-          <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
-            Staff Salary & Payroll Management
-          </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Disburse staff wages and monitor monthly payroll reports.
-          </p>
+      {/* Page Title & Navigation */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/80 pb-4">
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
+          <div>
+            <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
+              Staff Salary & Payroll Management
+            </h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Disburse staff wages and monitor monthly payroll reports.
+            </p>
+          </div>
         </div>
+
+        <Link to="/attendance">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs font-bold rounded-xl flex items-center gap-1.5 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+          >
+            <CalendarCheck className="w-3.5 h-3.5" />
+            Staff Attendance & Daily Log →
+          </Button>
+        </Link>
       </div>
 
       {/* Row 1: Two-Card Layout for Salary Inputs & Disbursements */}

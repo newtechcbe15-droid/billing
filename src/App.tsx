@@ -22,6 +22,7 @@ const RevenueExpenses = React.lazy(() => import("@/pages/RevenueExpenses"));
 const Delivery = React.lazy(() => import("@/pages/Delivery"));
 const Stock = React.lazy(() => import("@/pages/Stock"));
 const Salary = React.lazy(() => import("@/pages/Salary"));
+const Attendance = React.lazy(() => import("@/pages/Attendance"));
 const InvoiceList = React.lazy(() => import("@/pages/InvoiceList"));
 const Invoice = React.lazy(() => import("@/pages/Invoice"));
 
@@ -55,6 +56,7 @@ const systemRouterTopology = createBrowserRouter([
       { path: "reports", element: <Reports /> },
       { path: "revenue", element: <RevenueExpenses /> },
       { path: "salary", element: <Salary /> },
+      { path: "attendance", element: <Attendance /> },
       { path: "invoice", element: <InvoiceList /> },
       { path: "invoice/:id", element: <Invoice /> },
     ],
