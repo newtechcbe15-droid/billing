@@ -9,16 +9,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { 
-  TrendingUp, 
-  TrendingDown, 
-  Wallet, 
   PlusCircle, 
   Trash2,
   Calendar,
-  IndianRupee,
   Users,
-  Search
+  Search,
+  ArrowDownRight,
+  ArrowUpRight,
+  Layers
 } from "lucide-react";
 
 interface ExpenseFormValues {
@@ -72,11 +72,9 @@ export default function RevenueExpenses() {
   });
 
   const todayStr = new Date().toISOString().split("T")[0];
-  const currentMonthStr = todayStr.substring(0, 7);
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [ledgerSearch, setLedgerSearch] = useState("");
-  const [salarySearch, setSalarySearch] = useState("");
-  const [salaryMonth, setSalaryMonth] = useState(currentMonthStr);
+  const [activeTab, setActiveTab] = useState<"ledger" | "expense_form" | "salary_form">("ledger");
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<ExpenseFormValues>({
     defaultValues: {
@@ -106,7 +104,7 @@ export default function RevenueExpenses() {
         description: values.description,
         amount: Number(values.amount),
         payment_method: values.paymentMethod,
-        date: todayStr, // Force today's date
+        date: todayStr,
         created_at: new Date().toISOString()
       };
       expList.push(newExp);
@@ -115,7 +113,7 @@ export default function RevenueExpenses() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allExpenses"] });
-      toast({ title: "Log Added", description: "The log has been successfully recorded." });
+      toast({ title: "Entry Recorded", description: "Expense/Revenue successfully logged." });
       reset({ type: "Expense", description: "", amount: 0, paymentMethod: "Cash", date: todayStr });
     }
   });
@@ -153,7 +151,7 @@ export default function RevenueExpenses() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allSalaries"] });
-      toast({ title: "Salary Logged", description: "The staff salary has been successfully recorded." });
+      toast({ title: "Salary Logged", description: "Staff payment recorded." });
       resetSalary({ staffName: "Suresh", amount: 0, paymentMethod: "Cash", date: todayStr });
     }
   });
@@ -166,7 +164,7 @@ export default function RevenueExpenses() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allSalaries"] });
-      toast({ title: "Salary Deleted" });
+      toast({ title: "Salary Record Deleted" });
     }
   });
 
@@ -174,11 +172,10 @@ export default function RevenueExpenses() {
     addSalaryMutation.mutate(data);
   };
 
-  // Build the unified ledger array
+  // Build the unified ledger
   const { ledger, openingBalance } = useMemo(() => {
     const allRows: LedgerRow[] = [];
 
-    // 1. Add Expenses / Revenues (Logs)
     expenses.forEach((e: any) => {
       const is_revenue = e.type === "Revenue";
       const in_amt = is_revenue ? (Number(e.amount) || 0) : 0;
@@ -195,69 +192,45 @@ export default function RevenueExpenses() {
       });
     });
 
-    // 2. Add Deliveries (Payments collected on delivery) and Advances
     payments.forEach((p: any) => {
       const job = jobs.find((j: any) => j.id === p.job_id);
-      const bill_no = job ? job.bill_number : "-";
+      const billNo = job?.bill_number || "Bill";
+      const customer = job?.customers?.name || "";
 
-      // 2a. Add Advance Payment if collected
-      if (p.advance_paid && Number(p.advance_paid) > 0) {
-        const advDate = job && job.created_at ? job.created_at.split("T")[0] : "-";
-        
-        let in_amt = Number(p.advance_paid);
-        let out_amt = 0;
-        
-        if (p.payment_method === "GPay") {
-          out_amt = in_amt;
-        } else if (p.payment_method === "Split") {
-          // If split, usually the advance isn't split (it's usually paid upfront via one method), 
-          // but we can default to 0 out_amt for advance unless specifically known.
-          out_amt = 0;
-        }
-
+      if (Number(p.advance_paid) > 0) {
         allRows.push({
-          id: `adv-${p.job_id}`,
-          date: advDate,
-          bill_no,
-          summary: `Advance Collected (${p.payment_method || "Cash"})`,
-          in_amt,
-          out_amt,
+          id: `${p.id}-adv`,
+          date: job?.created_at ? job.created_at.split("T")[0] : todayStr,
+          bill_no: billNo,
+          summary: `Advance - ${customer} (${p.payment_method})`,
+          in_amt: Number(p.advance_paid),
+          out_amt: 0,
           is_expense: false,
-          timestamp: new Date(job?.created_at || new Date().toISOString()).getTime()
+          timestamp: new Date(job?.created_at || todayStr).getTime()
         });
       }
 
-      // 2b. Add Payment Collected on Delivery
-      if (p.payment_date) {
-        const in_amt = Number(p.amount_collected) || 0;
-        let out_amt = 0;
-        
-        if (p.payment_method === "GPay") {
-          out_amt = in_amt;
-        } else if (p.payment_method === "Split") {
-          out_amt = Number(p.split_gpay) || 0;
-        }
-
+      if (Number(p.amount_collected) > 0) {
+        const dDate = p.payment_date || (job?.created_at ? job.created_at.split("T")[0] : todayStr);
         allRows.push({
-          id: `del-${p.job_id}`,
-          date: p.payment_date,
-          bill_no,
-          summary: `Payment Collected (${p.payment_method || "Cash"})`,
-          in_amt,
-          out_amt,
+          id: `${p.id}-del`,
+          date: dDate,
+          bill_no: billNo,
+          summary: `Delivery Coll. - ${customer} (${p.payment_method})`,
+          in_amt: Number(p.amount_collected),
+          out_amt: 0,
           is_expense: false,
-          timestamp: new Date(p.payment_date).getTime()
+          timestamp: new Date(dDate).getTime()
         });
       }
     });
 
-    // 3. Add Salaries
     salaries.forEach((s: any) => {
       allRows.push({
         id: s.id,
         date: s.date,
-        bill_no: "-",
-        summary: `Salary - ${s.staff_name} (${s.payment_method})`,
+        bill_no: "Payroll",
+        summary: `Salary: ${s.staff_name} (${s.payment_method})`,
         in_amt: 0,
         out_amt: Number(s.amount) || 0,
         is_expense: true,
@@ -265,423 +238,425 @@ export default function RevenueExpenses() {
       });
     });
 
-    // Calculate opening balance for selectedDate
-    let opBal = 0;
-    if (selectedDate !== "ALL") {
-      allRows.forEach(r => {
-        if (r.date < selectedDate) {
-          opBal += r.in_amt - r.out_amt;
-        }
-      });
-    }
+    allRows.sort((a, b) => a.timestamp - b.timestamp);
 
-    // Filter rows for selectedDate
-    let filteredRows = allRows;
-    if (selectedDate !== "ALL") {
-      filteredRows = allRows.filter(r => r.date === selectedDate);
-      // Sort ascending by timestamp (oldest first for day book)
-      filteredRows.sort((a, b) => a.timestamp - b.timestamp);
-    } else {
-      // Sort descending for ALL view (newest first)
-      filteredRows.sort((a, b) => b.timestamp - a.timestamp);
-    }
-
-    return { ledger: filteredRows, openingBalance: opBal };
-  }, [expenses, payments, jobs, salaries, selectedDate]);
-
-  // Calculate totals from ledger + opening balance
-  const { totalIn, totalOut, balance } = useMemo(() => {
-    let sumIn = openingBalance > 0 ? openingBalance : 0;
-    let sumOut = openingBalance < 0 ? Math.abs(openingBalance) : 0;
-    
-    ledger.forEach(r => {
-      sumIn += r.in_amt;
-      sumOut += r.out_amt;
+    let priorBalance = 0;
+    allRows.forEach(row => {
+      if (row.date < selectedDate) {
+        priorBalance += (row.in_amt - row.out_amt);
+      }
     });
 
+    const dayRows = allRows.filter(row => row.date === selectedDate);
+    return { ledger: dayRows, openingBalance: priorBalance };
+  }, [expenses, payments, jobs, salaries, selectedDate, todayStr]);
+
+  // Daily totals
+  const dailyTotals = useMemo(() => {
+    let dayIn = 0;
+    let dayOut = 0;
+    ledger.forEach(r => {
+      dayIn += r.in_amt;
+      dayOut += r.out_amt;
+    });
     return {
-      totalIn: sumIn,
-      totalOut: sumOut,
-      balance: sumIn - sumOut
+      inflow: dayIn,
+      outflow: dayOut,
+      closing: openingBalance + dayIn - dayOut
     };
   }, [ledger, openingBalance]);
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto min-h-screen relative z-10">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-5 border-slate-200 dark:border-zinc-800">
+    <div className="space-y-6 max-w-[1300px] mx-auto pb-16">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/80 pb-5">
         <div>
-          <h1 className="text-2xl font-black tracking-tight uppercase flex items-center gap-2 bg-clip-text text-transparent bg-gradient-to-r from-emerald-600 to-blue-600">
-            <IndianRupee className="w-6 h-6 text-blue-600" /> Revenue & Expenses
-          </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">Track your overall business finances, revenue collected, and logged expenses.</p>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
+              Cash Flow Ledger & Staff Payroll
+            </h1>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Monitor daily cash registers, petty expenses, inflows, and staff salary disbursements.
+          </p>
+        </div>
+
+        {/* Date Selector */}
+        <div className="flex items-center gap-2 bg-card border border-border/80 p-1.5 px-3 rounded-2xl shadow-xs">
+          <Calendar className="w-3.5 h-3.5 text-primary" />
+          <span className="text-[10px] font-bold uppercase text-muted-foreground">Audit Date:</span>
+          <Input 
+            type="date" 
+            value={selectedDate} 
+            onChange={(e) => setSelectedDate(e.target.value)} 
+            className="h-7 w-32 text-xs font-mono font-bold bg-muted/50 border-0 shadow-none px-2"
+          />
         </div>
       </div>
 
-      {/* DASHBOARD CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="shadow-none border-border">
-          <CardHeader className="pb-1.5">
-            <CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" /> Total In (Revenue)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(totalIn)}</div>
-            <p className="text-[10px] text-muted-foreground mt-1">Includes Opening Balance</p>
-          </CardContent>
+      {/* KPI Financial Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+            Opening Balance
+          </span>
+          <div className="text-xl font-black font-mono text-foreground">
+            {formatCurrency(openingBalance)}
+          </div>
+          <span className="text-[10px] text-muted-foreground">Prior day carryover</span>
         </Card>
 
-        <Card className="shadow-none border-border">
-          <CardHeader className="pb-1.5">
-            <CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
-              <TrendingDown className="w-3.5 h-3.5 text-rose-500" /> Total Out (Expenses/GPay)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-black text-rose-600 dark:text-rose-400">{formatCurrency(totalOut)}</div>
-            <p className="text-[10px] text-muted-foreground mt-1">Expenses + GPay transfers</p>
-          </CardContent>
+        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block flex items-center justify-between">
+            <span>Day Inflow</span>
+            <ArrowDownRight className="w-3.5 h-3.5 text-emerald-500" />
+          </span>
+          <div className="text-xl font-black font-mono text-emerald-500">
+            {formatCurrency(dailyTotals.inflow)}
+          </div>
+          <span className="text-[10px] text-muted-foreground">Advances & collections</span>
         </Card>
 
-        <Card className="shadow-none border-border bg-slate-50 dark:bg-zinc-900/50">
-          <CardHeader className="pb-1.5">
-            <CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
-              <Wallet className="w-3.5 h-3.5 text-blue-500" /> Closing Balance
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className={`text-2xl font-black ${balance >= 0 ? "text-slate-900 dark:text-white" : "text-rose-500"}`}>
-              {formatCurrency(balance)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Carried forward to tomorrow</p>
-          </CardContent>
+        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block flex items-center justify-between">
+            <span>Day Outflow</span>
+            <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
+          </span>
+          <div className="text-xl font-black font-mono text-rose-500">
+            {formatCurrency(dailyTotals.outflow)}
+          </div>
+          <span className="text-[10px] text-muted-foreground">Expenses & salaries</span>
+        </Card>
+
+        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+            Closing Balance
+          </span>
+          <div className={`text-xl font-black font-mono ${dailyTotals.closing >= 0 ? "text-primary" : "text-rose-600"}`}>
+            {formatCurrency(dailyTotals.closing)}
+          </div>
+          <span className="text-[10px] text-muted-foreground">End of day position</span>
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* LOG EXPENSE & SALARY FORMS */}
-        <div className="lg:col-span-1 space-y-6">
-          <Card className="shadow-sm border-border sticky top-6">
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                <PlusCircle className="w-4 h-4 text-rose-500" /> New Log
+      {/* Navigation View Switcher Tabs */}
+      <div className="flex items-center gap-2 border-b border-border/80 pb-2">
+        <button
+          onClick={() => setActiveTab("ledger")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === "ledger"
+              ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          Daily Cash Book
+        </button>
+
+        <button
+          onClick={() => setActiveTab("expense_form")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === "expense_form"
+              ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          <PlusCircle className="w-3.5 h-3.5" />
+          Record Expense / Revenue
+        </button>
+
+        <button
+          onClick={() => setActiveTab("salary_form")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === "salary_form"
+              ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          Staff Payroll Registry
+        </button>
+      </div>
+
+      {/* TAB 1: DAILY CASH BOOK LEDGER */}
+      {activeTab === "ledger" && (
+        <Card className="cockpit-card rounded-2xl overflow-hidden animate-fadeIn">
+          <div className="p-4 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              Transactions on {selectedDate} ({ledger.length} Entries)
+            </span>
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input 
+                placeholder="Search ledger..." 
+                value={ledgerSearch}
+                onChange={(e) => setLedgerSearch(e.target.value)}
+                className="h-8 pl-8 text-xs rounded-xl"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-muted/40">
+                <TableRow className="border-b border-border/80 hover:bg-transparent">
+                  <TableHead className="text-xs font-bold uppercase py-3.5">Bill #</TableHead>
+                  <TableHead className="text-xs font-bold uppercase py-3.5">Particulars / Details</TableHead>
+                  <TableHead className="text-xs font-bold uppercase py-3.5 text-right">Inflow (₹)</TableHead>
+                  <TableHead className="text-xs font-bold uppercase py-3.5 text-right">Outflow (₹)</TableHead>
+                  <TableHead className="text-xs font-bold uppercase py-3.5 text-center">Type</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ledger.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-12 text-center text-xs text-muted-foreground">
+                      No financial transactions recorded on {selectedDate}.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  ledger
+                    .filter(r => !ledgerSearch || r.summary.toLowerCase().includes(ledgerSearch.toLowerCase()) || r.bill_no.toLowerCase().includes(ledgerSearch.toLowerCase()))
+                    .map((row) => (
+                      <TableRow key={row.id} className="border-b border-border/40 hover:bg-muted/30 text-xs">
+                        <TableCell className="font-mono font-bold">{row.bill_no}</TableCell>
+                        <TableCell className="font-semibold text-foreground">{row.summary}</TableCell>
+                        <TableCell className="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          {row.in_amt > 0 ? `+${formatCurrency(row.in_amt)}` : "-"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-rose-500">
+                          {row.out_amt > 0 ? `-${formatCurrency(row.out_amt)}` : "-"}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className={`text-[9px] font-mono font-bold uppercase ${row.is_expense ? "bg-rose-500/10 text-rose-600 border-rose-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"}`}>
+                            {row.is_expense ? "Debit" : "Credit"}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      )}
+
+      {/* TAB 2: RECORD EXPENSE / REVENUE FORM */}
+      {activeTab === "expense_form" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+          {/* Form */}
+          <Card className="cockpit-card rounded-2xl overflow-hidden">
+            <CardHeader className="p-4 border-b border-border/60 bg-muted/20">
+              <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
+                Log New Expense / Revenue
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-6">
+            <CardContent className="p-5">
               <form onSubmit={handleSubmit(onAddExpense)} className="space-y-4">
                 <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Date (Automated)</label>
-                  <Input type="date" {...register("date")} disabled className="h-9 font-medium bg-muted" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Type</label>
-                  <div className="flex gap-2">
+                  <label className="text-xs font-semibold block mb-1">Transaction Category</label>
+                  <div className="grid grid-cols-2 gap-2">
                     <Button 
                       type="button" 
                       variant={watch("type") === "Expense" ? "default" : "outline"} 
-                      onClick={() => setValue("type", "Expense")} 
-                      className={`flex-1 h-9 text-xs font-bold ${watch("type") === "Expense" ? "bg-rose-600 hover:bg-rose-700 text-white" : ""}`}
+                      onClick={() => setValue("type", "Expense")}
+                      className={`h-9 text-xs font-bold rounded-xl ${watch("type") === "Expense" ? "bg-rose-600 hover:bg-rose-700 text-white" : ""}`}
                     >
-                      Expense
+                      Expense (Out)
                     </Button>
                     <Button 
                       type="button" 
                       variant={watch("type") === "Revenue" ? "default" : "outline"} 
-                      onClick={() => setValue("type", "Revenue")} 
-                      className={`flex-1 h-9 text-xs font-bold ${watch("type") === "Revenue" ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                      onClick={() => setValue("type", "Revenue")}
+                      className={`h-9 text-xs font-bold rounded-xl ${watch("type") === "Revenue" ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
                     >
-                      Revenue
+                      Revenue (In)
                     </Button>
                   </div>
                 </div>
+
                 <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Description</label>
-                  <Input {...register("description")} placeholder="e.g. Spare Parts, Electricity..." required className="h-9" />
+                  <label className="text-xs font-semibold block mb-1">Description / Particulars</label>
+                  <Input 
+                    {...register("description", { required: true })} 
+                    placeholder="e.g. Shop electricity, tea, tools"
+                    className="h-10 text-xs rounded-xl"
+                  />
                 </div>
+
                 <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Amount</label>
-                  <Input type="number" step="0.01" {...register("amount")} required className="h-9 font-bold" />
+                  <label className="text-xs font-semibold block mb-1">Amount (₹)</label>
+                  <Input 
+                    type="number"
+                    step="any"
+                    {...register("amount", { required: true, min: 1 })} 
+                    placeholder="0.00"
+                    className="h-10 text-sm font-mono font-bold rounded-xl"
+                  />
                 </div>
+
                 <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Payment Method</label>
-                  <select {...register("paymentMethod")} className="w-full border rounded-lg p-2 text-xs font-medium bg-background h-9">
+                  <label className="text-xs font-semibold block mb-1">Payment Method</label>
+                  <select 
+                    {...register("paymentMethod")} 
+                    className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
+                  >
                     <option value="Cash">Cash</option>
-                    <option value="GPay">GPay</option>
+                    <option value="GPay">GPay / UPI</option>
                     <option value="Bank Transfer">Bank Transfer</option>
                     <option value="Other">Other</option>
                   </select>
                 </div>
-                <Button type="submit" disabled={addExpenseMutation.isPending} className="w-full h-10 font-bold bg-slate-900 hover:bg-slate-800 text-white mt-2">
-                  Add Log
+
+                <Button 
+                  type="submit" 
+                  disabled={addExpenseMutation.isPending}
+                  className="w-full h-11 font-bold text-xs uppercase tracking-wider rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/20"
+                >
+                  Record Entry
                 </Button>
               </form>
             </CardContent>
           </Card>
 
-          <Card className="shadow-sm border-border sticky top-[420px]">
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                <Users className="w-4 h-4 text-blue-500" /> Log Staff Salary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <form onSubmit={handleSubmitSalary(onAddSalary)} className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Date</label>
-                  <Input type="date" {...registerSalary("date")} disabled className="h-9 font-medium bg-muted" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Staff Name</label>
-                  <select {...registerSalary("staffName")} className="w-full border rounded-lg p-2 text-xs font-medium bg-background h-9">
-                    <option value="Suresh">Suresh</option>
-                    <option value="Sajith">Sajith</option>
-                    <option value="Karthik Raj">Karthik Raj</option>
-                    <option value="Karthi">Karthi</option>
-                    <option value="Sanjay">Sanjay</option>
-                    <option value="Anandhan">Anandhan</option>
-                    <option value="Karthikeyan">Karthikeyan</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Amount</label>
-                  <Input type="number" step="0.01" {...registerSalary("amount")} required className="h-9 font-bold" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Payment Method</label>
-                  <select {...registerSalary("paymentMethod")} className="w-full border rounded-lg p-2 text-xs font-medium bg-background h-9">
-                    <option value="Cash">Cash</option>
-                    <option value="GPay">GPay</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                  </select>
-                </div>
-                <Button type="submit" disabled={addSalaryMutation.isPending} className="w-full h-10 font-bold bg-blue-600 hover:bg-blue-700 text-white mt-2">
-                  Add Salary
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* EXPENSES LEDGER */}
-        <div className="lg:col-span-3">
-          <Card className="shadow-sm border-border">
-            <div className="p-4 border-b bg-muted/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                <Calendar className="w-4 h-4 text-zinc-500" /> Day Book Ledger
-              </h3>
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant={selectedDate === "ALL" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelectedDate("ALL")}
-                  className="h-8 text-xs font-bold"
-                >
-                  View All Dates
-                </Button>
-                <div className="h-4 w-px bg-border mx-1"></div>
-                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Date Filter:</label>
-                <Input 
-                  type="date" 
-                  value={selectedDate !== "ALL" ? selectedDate : todayStr} 
-                  onChange={(e) => setSelectedDate(e.target.value)} 
-                  className="h-8 font-medium w-auto" 
-                />
-                <div className="relative ml-2">
-                  <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground/60" />
-                  <Input 
-                    placeholder="Search ledger..." 
-                    value={ledgerSearch}
-                    onChange={(e) => setLedgerSearch(e.target.value)}
-                    className="pl-8 h-8 font-medium w-32 sm:w-48 text-xs bg-background/50 border-border"
-                  />
-                </div>
+          {/* Recent Daily Logs List */}
+          <div className="lg:col-span-2">
+            <Card className="cockpit-card rounded-2xl overflow-hidden">
+              <div className="p-4 border-b border-border/60 bg-muted/20">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Today's Recorded Logs ({expenses.filter((e: any) => e.date === todayStr).length})
+                </span>
               </div>
-            </div>
-            <Table>
-              <TableHeader className="bg-muted/40">
-                <TableRow>
-                  <TableHead className="w-[60px]">S.No</TableHead>
-                  <TableHead className="w-[100px]">Date</TableHead>
-                  <TableHead className="w-[120px]">Bill No</TableHead>
-                  <TableHead>Summary</TableHead>
-                  <TableHead className="text-right text-emerald-600 dark:text-emerald-400 font-bold">In</TableHead>
-                  <TableHead className="text-right text-rose-600 dark:text-rose-400 font-bold">Out</TableHead>
-                  <TableHead className="w-[60px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {selectedDate !== "ALL" && !ledgerSearch.trim() && (
-                  <TableRow className="bg-blue-50/30 dark:bg-blue-900/10">
-                    <TableCell className="font-mono text-xs text-muted-foreground">-</TableCell>
-                    <TableCell className="font-mono text-xs text-blue-600 font-bold">{selectedDate}</TableCell>
-                    <TableCell className="font-mono text-xs font-bold">-</TableCell>
-                    <TableCell className="font-bold text-xs text-blue-600 uppercase tracking-wider">Opening Balance Brought Forward</TableCell>
-                    <TableCell className="text-right font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                      {openingBalance > 0 ? formatCurrency(openingBalance) : "-"}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs font-bold text-rose-600 dark:text-rose-400">
-                      {openingBalance < 0 ? formatCurrency(Math.abs(openingBalance)) : "-"}
-                    </TableCell>
-                    <TableCell></TableCell>
-                  </TableRow>
-                )}
-
-                {ledger.filter(row => {
-                  const search = ledgerSearch.toLowerCase().trim();
-                  if (!search) return true;
-                  return (
-                    row.bill_no.toLowerCase().includes(search) ||
-                    row.summary.toLowerCase().includes(search)
-                  );
-                }).length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="h-32 text-center text-xs font-medium text-muted-foreground opacity-50">
-                      No records found.
-                    </TableCell>
-                  </TableRow>
+              <div className="p-4 space-y-2">
+                {expenses.filter((e: any) => e.date === todayStr).length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-8">No custom entries logged today.</p>
                 ) : (
-                  ledger.filter(row => {
-                    const search = ledgerSearch.toLowerCase().trim();
-                    if (!search) return true;
-                    return (
-                      row.bill_no.toLowerCase().includes(search) ||
-                      row.summary.toLowerCase().includes(search)
-                    );
-                  }).map((row, idx) => (
-                    <TableRow key={row.id} className="hover:bg-muted/10 transition-colors">
-                      <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
-                      <TableCell className="font-mono text-xs">{row.date}</TableCell>
-                      <TableCell className="font-mono text-xs font-bold">{row.bill_no}</TableCell>
-                      <TableCell className="font-medium text-xs">{row.summary}</TableCell>
-                      <TableCell className="text-right font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                        {row.in_amt > 0 ? formatCurrency(row.in_amt) : "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs font-bold text-rose-600 dark:text-rose-400">
-                        {row.out_amt > 0 ? formatCurrency(row.out_amt) : "-"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {row.is_expense && row.summary.startsWith("Salary") ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => deleteSalaryMutation.mutate(row.id)}
-                            className="h-7 w-7 p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-500/10"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        ) : row.is_expense ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => deleteExpenseMutation.mutate(row.id)}
-                            className="h-7 w-7 p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-500/10"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        ) : null}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </Card>
-
-          {/* STAFF SALARIES LIST */}
-          <Card className="shadow-sm border-border mt-6">
-            <div className="p-4 border-b bg-muted/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                <Users className="w-4 h-4 text-zinc-500" /> Staff Salaries List
-              </h3>
-              <div className="flex flex-wrap items-center gap-2 sm:ml-auto w-full sm:w-auto">
-                <Button 
-                  variant={salaryMonth === "ALL" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSalaryMonth("ALL")}
-                  className="h-8 text-xs font-bold"
-                >
-                  All Months
-                </Button>
-                <div className="h-4 w-px bg-border mx-1"></div>
-                <Input 
-                  type="month"
-                  value={salaryMonth !== "ALL" ? salaryMonth : currentMonthStr}
-                  onChange={(e) => setSalaryMonth(e.target.value)}
-                  className="h-8 font-medium w-auto text-xs bg-background/50"
-                />
-                <div className="relative flex-1 sm:flex-none">
-                  <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground/60" />
-                  <Input 
-                    placeholder="Search staff..." 
-                    value={salarySearch}
-                    onChange={(e) => setSalarySearch(e.target.value)}
-                    className="pl-8 h-8 font-medium w-full sm:w-40 text-xs bg-background/50 border-border"
-                  />
-                </div>
-              </div>
-            </div>
-            <Table>
-              <TableHeader className="bg-muted/40">
-                <TableRow>
-                  <TableHead className="w-[60px]">S.No</TableHead>
-                  <TableHead className="w-[100px]">Date</TableHead>
-                  <TableHead>Staff Name</TableHead>
-                  <TableHead className="text-right">Payment Method</TableHead>
-                  <TableHead className="text-right text-rose-600 dark:text-rose-400 font-bold">Amount</TableHead>
-                  <TableHead className="w-[60px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {salaries.filter((row: any) => {
-                  if (salaryMonth !== "ALL" && !row.date?.startsWith(salaryMonth)) return false;
-                  const search = salarySearch.toLowerCase().trim();
-                  if (!search) return true;
-                  return (
-                    row.staff_name?.toLowerCase().includes(search) ||
-                    row.payment_method?.toLowerCase().includes(search)
-                  );
-                }).length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="h-32 text-center text-xs font-medium text-muted-foreground opacity-50">
-                      No staff salaries logged yet for this filter.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  salaries.filter((row: any) => {
-                    if (salaryMonth !== "ALL" && !row.date?.startsWith(salaryMonth)) return false;
-                    const search = salarySearch.toLowerCase().trim();
-                    if (!search) return true;
-                    return (
-                      row.staff_name?.toLowerCase().includes(search) ||
-                      row.payment_method?.toLowerCase().includes(search)
-                    );
-                  }).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map((row: any, idx: number) => (
-                    <TableRow key={row.id} className="hover:bg-muted/10 transition-colors">
-                      <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
-                      <TableCell className="font-mono text-xs">{row.date}</TableCell>
-                      <TableCell className="font-medium text-xs font-bold">{row.staff_name}</TableCell>
-                      <TableCell className="text-right font-medium text-xs text-muted-foreground">{row.payment_method}</TableCell>
-                      <TableCell className="text-right font-mono text-xs font-bold text-rose-600 dark:text-rose-400">
-                        {formatCurrency(Number(row.amount))}
-                      </TableCell>
-                      <TableCell className="text-right">
+                  expenses.filter((e: any) => e.date === todayStr).map((item: any) => (
+                    <div key={item.id} className="p-3 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs">
+                      <div>
+                        <p className="font-bold text-foreground">{item.description}</p>
+                        <p className="text-[10px] text-muted-foreground">{item.payment_method} • {item.type}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`font-mono font-bold ${item.type === "Revenue" ? "text-emerald-500" : "text-rose-500"}`}>
+                          {item.type === "Revenue" ? "+" : "-"}{formatCurrency(Number(item.amount))}
+                        </span>
                         <Button
-                          size="sm"
+                          size="icon"
                           variant="ghost"
-                          onClick={() => deleteSalaryMutation.mutate(row.id)}
-                          className="h-7 w-7 p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                          onClick={() => deleteExpenseMutation.mutate(item.id)}
+                          className="h-7 w-7 text-muted-foreground hover:text-rose-500"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
-                      </TableCell>
-                    </TableRow>
+                      </div>
+                    </div>
                   ))
                 )}
-              </TableBody>
-            </Table>
-          </Card>
+              </div>
+            </Card>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* TAB 3: STAFF PAYROLL */}
+      {activeTab === "salary_form" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+          {/* Payroll Entry Form */}
+          <Card className="cockpit-card rounded-2xl overflow-hidden">
+            <CardHeader className="p-4 border-b border-border/60 bg-muted/20">
+              <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
+                Disburse Staff Salary
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-5">
+              <form onSubmit={handleSubmitSalary(onAddSalary)} className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold block mb-1">Staff Member</label>
+                  <select 
+                    {...registerSalary("staffName")} 
+                    className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
+                  >
+                    {["Suresh", "Sajith", "Karthik Raj", "Karthi", "Sanjay", "Anandhan", "Karthikeyan"].map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold block mb-1">Salary Amount (₹)</label>
+                  <Input 
+                    type="number"
+                    step="any"
+                    {...registerSalary("amount", { required: true, min: 1 })} 
+                    placeholder="0.00"
+                    className="h-10 text-sm font-mono font-bold rounded-xl"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold block mb-1">Payment Method</label>
+                  <select 
+                    {...registerSalary("paymentMethod")} 
+                    className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="GPay">GPay / UPI</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                  </select>
+                </div>
+
+                <Button 
+                  type="submit" 
+                  disabled={addSalaryMutation.isPending}
+                  className="w-full h-11 font-bold text-xs uppercase tracking-wider rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-500/20"
+                >
+                  Record Salary Payment
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* Salary Records Feed */}
+          <div className="lg:col-span-2">
+            <Card className="cockpit-card rounded-2xl overflow-hidden">
+              <div className="p-4 border-b border-border/60 bg-muted/20 flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Payroll Disbursements ({salaries.length} Records)
+                </span>
+              </div>
+              <div className="p-4 space-y-2">
+                {salaries.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-8">No payroll records logged yet.</p>
+                ) : (
+                  salaries.map((s: any) => (
+                    <div key={s.id} className="p-3 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs">
+                      <div>
+                        <p className="font-bold text-foreground">{s.staff_name}</p>
+                        <p className="text-[10px] text-muted-foreground">{s.date} • {s.payment_method}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono font-bold text-rose-500">
+                          -{formatCurrency(Number(s.amount))}
+                        </span>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => deleteSalaryMutation.mutate(s.id)}
+                          className="h-7 w-7 text-muted-foreground hover:text-rose-500"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

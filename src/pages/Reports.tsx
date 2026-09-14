@@ -2,55 +2,58 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { localDB } from "@/lib/localDB";
 import { exportToCSV, formatCurrency } from "@/lib/utils";
-import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { 
   FileSpreadsheet, 
   TrendingUp, 
-  ShieldAlert, 
-  Clock,
-  Layers,
-  Eye,
-  FileText,
-  Search,
-  Phone,
-  User,
-  MonitorSmartphone,
-  Truck,
-  Lock,
-  BadgeCheck,
-  Receipt,
-  Printer
+  Search, 
+  Eye, 
+  Printer, 
+  Lock, 
+  Calendar,
+  CheckCircle2,
+  Clock
 } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { InvoicePrint } from "@/components/service-job/InvoicePrint";
+
+const STATUS_COLOR_MAP: Record<string, string> = {
+  Collected: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  Working: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+  Ready: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20",
+  Return: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+  Delivered: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  "Delivered Return": "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+};
 
 const StatusCell = ({ job, onSave }: { job: any, onSave: (id: string, status: string, reason?: string) => void }) => {
   const [draftStatus, setDraftStatus] = useState(job.status);
   const [draftReason, setDraftReason] = useState(job.returnReason || "");
   const isChanged = draftStatus !== job.status || (draftStatus === "Return" && draftReason !== (job.returnReason || ""));
 
-  // Sync draft if job.status updates from parent/server
   useEffect(() => {
     setDraftStatus(job.status);
   }, [job.status]);
 
   if (job.status === "Delivered" || job.status === "Delivered Return") {
     return (
-      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] uppercase">
-        <Lock className="w-3 h-3" /> {job.status}
-      </div>
+      <Badge variant="outline" className={`font-mono text-[10px] font-bold uppercase gap-1 px-2 py-0.5 ${STATUS_COLOR_MAP[job.status] || ""}`}>
+        <Lock className="w-2.5 h-2.5" /> {job.status}
+      </Badge>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5">
       <select 
         value={draftStatus} 
         onChange={(e) => setDraftStatus(e.target.value)}
-        className="border rounded px-2 py-1 text-[10px] font-bold uppercase bg-transparent outline-none cursor-pointer hover:bg-slate-50 dark:hover:bg-zinc-900"
+        className="border border-border/80 rounded-lg px-2 py-1 text-[10px] font-bold uppercase bg-background outline-none cursor-pointer hover:bg-muted"
       >
         <option value="Collected">Collected</option>
         <option value="Working">Working</option>
@@ -61,19 +64,19 @@ const StatusCell = ({ job, onSave }: { job: any, onSave: (id: string, status: st
         )}
       </select>
       {draftStatus === "Return" && (
-        <input 
+        <Input 
           type="text" 
           value={draftReason} 
           onChange={(e) => setDraftReason(e.target.value)} 
           placeholder="Reason for return..." 
-          className="border rounded px-2 py-1 text-[10px] w-32 outline-none h-6"
+          className="h-6 w-28 text-[10px] px-1.5"
         />
       )}
       {isChanged && (
         <Button 
           size="sm" 
           onClick={() => onSave(job.id, draftStatus, draftReason)}
-          className="h-6 px-2 text-[10px] font-bold bg-blue-600 hover:bg-blue-700 text-white"
+          className="h-6 px-2 text-[10px] font-bold bg-primary hover:bg-primary/90 text-primary-foreground rounded"
         >
           Save
         </Button>
@@ -98,6 +101,7 @@ interface ReportRow {
   customers: {
     name: string;
     mobile_number: string;
+    address?: string;
   };
   payments: {
     estimated_amount: number;
@@ -117,29 +121,38 @@ interface ReportRow {
 
 export default function Reports() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
-  // Analytical State Management Filter Hooks
+  // Filters
   const [timeframe, setTimeframe] = useState<"all" | "today" | "month" | "year">("all");
   const [deviceFilter, setDeviceFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
-  const [globalSearch, setGlobalSearch] = useState<string>("");
+  const [globalSearch, setGlobalSearch] = useState<string>(searchParams.get("q") || "");
   
-  // View Modal State
+  // Modals
   const [selectedJob, setSelectedJob] = useState<any | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-
-  // Print Modal State
   const [printJob, setPrintJob] = useState<any | null>(null);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
-  // 1. Master Pipeline Query Ledger Fetch Execution
-  const { data: reportsData = [], isLoading, error } = useQuery({
+  // Sync URL search param
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q !== null) {
+      setGlobalSearch(q);
+    }
+  }, [searchParams]);
+
+  // Query Master Reports Data
+  const { data: reportsData = [], isLoading } = useQuery({
     queryKey: ["reportsLedgerMaster"],
     queryFn: async () => {
-      const jobs = await localDB.jobs.getAll();
-      const customers = await localDB.customers.getAll();
-      const payments = await localDB.payments.getAll();
-      const warranties = await localDB.warranties.getAll();
+      const [jobs, customers, payments, warranties] = await Promise.all([
+        localDB.jobs.getAll(),
+        localDB.customers.getAll(),
+        localDB.payments.getAll(),
+        localDB.warranties.getAll()
+      ]);
 
       const enrichedJobs = jobs.map((job: any) => ({
         ...job,
@@ -149,7 +162,6 @@ export default function Reports() {
       }));
 
       enrichedJobs.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      
       return enrichedJobs as ReportRow[];
     }
   });
@@ -187,52 +199,48 @@ export default function Reports() {
     setIsPrintModalOpen(true);
   };
 
-  // 2. High-Performance Multi-Pass Filter Calculation Matrix via useMemo
+  // Filter records
   const processedRecords = useMemo(() => {
     let dataset = [...reportsData];
     const todayStr = new Date().toISOString().split("T")[0];
-    const currentYearStr = new Date().getFullYear().toString(); // 2026 Context
+    const currentYearStr = new Date().getFullYear().toString();
     const currentMonth = new Date().getMonth();
 
-    // Pass A: Temporal Timeframe Sorting Bounds
     if (timeframe === "today") {
-      dataset = dataset.filter(r => r.created_at.split("T")[0] === todayStr);
+      dataset = dataset.filter(r => r.created_at?.split("T")[0] === todayStr);
     } else if (timeframe === "month") {
       dataset = dataset.filter(r => {
         const d = new Date(r.created_at);
         return d.getMonth() === currentMonth && d.getFullYear().toString() === currentYearStr;
       });
     } else if (timeframe === "year") {
-      dataset = dataset.filter(r => r.created_at.startsWith(currentYearStr));
+      dataset = dataset.filter(r => r.created_at?.startsWith(currentYearStr));
     }
 
-    // Pass B: Device Vector Classification
     if (deviceFilter !== "ALL") {
       dataset = dataset.filter(r => r.device_type === deviceFilter);
     }
 
-    // Pass C: Workflow Pipeline Milestone Filter
     if (statusFilter !== "ALL") {
       dataset = dataset.filter(r => r.status === statusFilter);
     }
 
-    // Pass D: Free Text Global Search
     if (globalSearch.trim()) {
-      const searchTarget = globalSearch.toLowerCase().trim();
+      const target = globalSearch.toLowerCase().trim();
       dataset = dataset.filter(r => 
-        r.bill_number.toLowerCase().includes(searchTarget) ||
-        (r.customers?.name || "").toLowerCase().includes(searchTarget) ||
-        (r.customers?.mobile_number || "").toLowerCase().includes(searchTarget) ||
-        r.brand.toLowerCase().includes(searchTarget) ||
-        r.model.toLowerCase().includes(searchTarget) ||
-        ((r as any).imei_serial_number || "").toLowerCase().includes(searchTarget)
+        r.bill_number?.toLowerCase().includes(target) ||
+        (r.customers?.name || "").toLowerCase().includes(target) ||
+        (r.customers?.mobile_number || "").toLowerCase().includes(target) ||
+        r.brand?.toLowerCase().includes(target) ||
+        r.model?.toLowerCase().includes(target) ||
+        ((r as any).imei_serial_number || "").toLowerCase().includes(target)
       );
     }
 
     return dataset;
   }, [reportsData, timeframe, deviceFilter, statusFilter, globalSearch]);
 
-  // 3. Dynamic Accounting Ledger Summaries Calculator Component Loop
+  // Financial calculations
   const financialSummary = useMemo(() => {
     let totalGrossReceipts = 0;
     let totalOutstandingDue = 0;
@@ -240,8 +248,8 @@ export default function Reports() {
 
     processedRecords.forEach(rec => {
       if (rec.payments) {
-        totalGrossReceipts += (rec.payments.advance_paid + rec.payments.amount_collected);
-        totalOutstandingDue += rec.payments.balance_due;
+        totalGrossReceipts += ((rec.payments.advance_paid || 0) + (rec.payments.amount_collected || 0));
+        totalOutstandingDue += (rec.payments.balance_due || 0);
       }
       if (rec.status === "Delivered") {
         completeDeliveredCount++;
@@ -251,13 +259,14 @@ export default function Reports() {
     return { totalGrossReceipts, totalOutstandingDue, completeDeliveredCount };
   }, [processedRecords]);
 
-  // Comprehensive Revenue Summary
+  // Revenue by timeframe
   const revenueSummary = useMemo(() => {
     let day = 0, week = 0, month = 0, year = 0;
     const now = new Date();
     const todayStr = now.toISOString().split("T")[0];
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
+
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
@@ -280,9 +289,9 @@ export default function Reports() {
     return { day, week, month, year };
   }, [reportsData]);
 
-  // 4. Client Side Dynamic Excel/CSV Binary Extraction Stream Generator Routine
+  // Export CSV
   const triggerSpreadsheetExport = () => {
-    const formattedExportPayload = processedRecords.map(r => ({
+    const formatted = processedRecords.map(r => ({
       "Bill Number": r.bill_number,
       "Log Date": new Date(r.created_at).toLocaleDateString("en-IN"),
       "Customer Name": r.customers?.name || "N/A",
@@ -295,468 +304,371 @@ export default function Reports() {
       "Outstanding Remainder Due (INR)": r.payments?.balance_due || 0,
       "Payment Status Mapping": r.payments?.payment_status || "Unpaid"
     }));
-{/* ... */}
-    exportToCSV(formattedExportPayload, `NTCS_Financial_Ledger_Report_${timeframe.toUpperCase()}`);
+    exportToCSV(formatted, `NTCS_Financial_Ledger_Report_${timeframe.toUpperCase()}`);
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto min-h-screen relative z-10">
-      {/* HEADER COCKPIT ACTION CONTROLS SECTION */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-5 border-slate-200 dark:border-zinc-800">
+    <div className="space-y-6 max-w-[1400px] mx-auto pb-16">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/80 pb-5">
         <div>
-          <h1 className="text-2xl font-black tracking-tight uppercase bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-emerald-500">Service Reports</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">View finances, performance stats, and job logs.</p>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
+            <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
+              Master Ledger & Audit Reports
+            </h1>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Real-time financial summaries, ticket registries, and customer service audits.
+          </p>
         </div>
-        <Button 
-          onClick={triggerSpreadsheetExport} 
-          disabled={processedRecords.length === 0}
-          className="text-xs font-bold gap-2 h-10 px-4 shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg self-stretch sm:self-auto"
-        >
-          <FileSpreadsheet className="w-4 h-4 stroke-[2.2]" />
-          Export to CSV
-        </Button>
-      </div>
 
-      {/* REVENUE SUMMARY BLOCKS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="shadow-sm border-border bg-white dark:bg-zinc-900">
-          <CardHeader className="pb-1.5">
-            <CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-blue-500" /> Today
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
-              {formatCurrency(revenueSummary.day)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Today's Revenue</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-sm border-border bg-white dark:bg-zinc-900">
-          <CardHeader className="pb-1.5">
-            <CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-indigo-500" /> This Week
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
-              {formatCurrency(revenueSummary.week)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Weekly Revenue</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-sm border-border bg-white dark:bg-zinc-900">
-          <CardHeader className="pb-1.5">
-            <CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-violet-500" /> This Month
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
-              {formatCurrency(revenueSummary.month)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Monthly Revenue</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-sm border-border bg-white dark:bg-zinc-900">
-          <CardHeader className="pb-1.5">
-            <CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" /> This Year
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
-              {formatCurrency(revenueSummary.year)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Annual Revenue</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* FILTER CONTROLLER BAR BLOCK CONTAINER */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-white dark:bg-zinc-900 p-4 rounded-xl border border-border shadow-sm">
-        <div>
-          <label className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground block mb-1.5">Timeframe</label>
-          <select value={timeframe} onChange={(e) => setTimeframe(e.target.value as any)} className="w-full border rounded-lg text-xs font-semibold p-2 bg-background text-foreground h-9 shadow-sm">
-            <option value="all">All Time</option>
-            <option value="today">Today</option>
-            <option value="month">This Month</option>
-            <option value="year">This Year</option>
-          </select>
-        </div>
-        <div>
-          <label className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground block mb-1.5">Device Type</label>
-          <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)} className="w-full border rounded-lg text-xs font-semibold p-2 bg-background text-foreground h-9 shadow-sm">
-            <option value="ALL">All Devices</option>
-            <option value="Mobile">Mobile</option>
-            <option value="Laptop">Laptop</option>
-            <option value="PC">PC</option>
-          </select>
-        </div>
-        <div>
-          <label className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground block mb-1.5">Status</label>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full border rounded-lg text-xs font-semibold p-2 bg-background text-foreground h-9 shadow-sm">
-            <option value="ALL">All Statuses</option>
-            <option value="Received">Received</option>
-            <option value="On Working">On Working</option>
-            <option value="Completed">Completed</option>
-            <option value="Delivered">Delivered</option>
-            <option value="Returned">Returned</option>
-          </select>
+        <div className="flex items-center gap-2 self-stretch sm:self-auto">
+          <Button 
+            onClick={triggerSpreadsheetExport} 
+            disabled={processedRecords.length === 0}
+            className="text-xs font-bold gap-2 h-10 px-4 rounded-xl shadow-md bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Export to CSV
+          </Button>
         </div>
       </div>
 
-      <div className="bg-white dark:bg-zinc-900 p-4 rounded-xl border border-border shadow-sm">
+      {/* KPI Revenue Summary Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {[
+          { label: "Today's Revenue", val: revenueSummary.day, icon: TrendingUp, color: "text-blue-500", bg: "bg-blue-500/10" },
+          { label: "This Week", val: revenueSummary.week, icon: Calendar, color: "text-indigo-500", bg: "bg-indigo-500/10" },
+          { label: "This Month", val: revenueSummary.month, icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+          { label: "This Year", val: revenueSummary.year, icon: Clock, color: "text-purple-500", bg: "bg-purple-500/10" },
+        ].map((kpi, idx) => {
+          const Icon = kpi.icon;
+          return (
+            <Card key={idx} className="cockpit-card rounded-2xl p-4 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {kpi.label}
+                </span>
+                <div className={`p-1.5 rounded-lg ${kpi.bg} ${kpi.color}`}>
+                  <Icon className="w-3.5 h-3.5" />
+                </div>
+              </div>
+              <div className="text-xl sm:text-2xl font-black font-mono text-foreground">
+                {formatCurrency(kpi.val)}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Secondary Financial Indicators */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+              Filtered Revenue
+            </span>
+            <span className="text-xl font-black font-mono text-emerald-500">
+              {formatCurrency(financialSummary.totalGrossReceipts)}
+            </span>
+          </div>
+          <span className="text-xs font-mono text-muted-foreground">Collected</span>
+        </Card>
+
+        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+              Pending Balance
+            </span>
+            <span className="text-xl font-black font-mono text-rose-500">
+              {formatCurrency(financialSummary.totalOutstandingDue)}
+            </span>
+          </div>
+          <span className="text-xs font-mono text-muted-foreground">Receivable</span>
+        </Card>
+
+        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+              Delivered Units
+            </span>
+            <span className="text-xl font-black font-mono text-primary">
+              {financialSummary.completeDeliveredCount} Units
+            </span>
+          </div>
+          <span className="text-xs font-mono text-muted-foreground">Completed</span>
+        </Card>
+      </div>
+
+      {/* Filter Toolbar Card */}
+      <Card className="cockpit-card rounded-2xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Timeframe selector pills */}
+          <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/60">
+            {(["all", "today", "month", "year"] as const).map((tf) => (
+              <button
+                key={tf}
+                onClick={() => setTimeframe(tf)}
+                className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all ${
+                  timeframe === tf
+                    ? "bg-primary text-primary-foreground shadow-xs shadow-primary/20"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {tf === "all" ? "All Time" : tf === "today" ? "Today" : tf === "month" ? "This Month" : "This Year"}
+              </button>
+            ))}
+          </div>
+
+          {/* Device and Status filters */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={deviceFilter}
+              onChange={(e) => setDeviceFilter(e.target.value)}
+              className="border border-border/80 rounded-xl px-2.5 py-1 text-xs font-semibold bg-background h-8 outline-none"
+            >
+              <option value="ALL">All Devices</option>
+              <option value="Mobile">Mobile</option>
+              <option value="Laptop">Laptop</option>
+              <option value="PC">PC</option>
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="border border-border/80 rounded-xl px-2.5 py-1 text-xs font-semibold bg-background h-8 outline-none"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="Collected">Collected</option>
+              <option value="Working">Working</option>
+              <option value="Ready">Ready</option>
+              <option value="Return">Return</option>
+              <option value="Delivered">Delivered</option>
+              <option value="Delivered Return">Delivered Return</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Global Search Bar */}
         <div className="relative">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground/60" />
-          <Input
-            placeholder="Search reports by bill, customer, device..."
+          <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
+          <Input 
+            placeholder="Search reports by Bill #, Customer Name, Mobile, or Model..."
             value={globalSearch}
             onChange={(e) => setGlobalSearch(e.target.value)}
-            className="pl-9 w-full bg-background/50 border-border shadow-none"
+            className="pl-9 h-9 text-xs rounded-xl bg-background"
           />
         </div>
-      </div>
-
-      {/* ACCOUNTING SUMMARY METRIC FLASH GRID DISPLAY BLOCK */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card className="shadow-none border-border">
-          <CardHeader className="pb-1.5"><CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5 text-emerald-500"/> Total Revenue</CardTitle></CardHeader>
-          <CardContent><div className="text-xl font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(financialSummary.totalGrossReceipts)}</div></CardContent>
-        </Card>
-        <Card className="shadow-none border-border">
-          <CardHeader className="pb-1.5"><CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5 text-rose-500"/> Pending Balance</CardTitle></CardHeader>
-          <CardContent><div className="text-xl font-black text-rose-600 dark:text-rose-400">{formatCurrency(financialSummary.totalOutstandingDue)}</div></CardContent>
-        </Card>
-        <Card className="shadow-none border-border">
-          <CardHeader className="pb-1.5"><CardTitle className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-blue-500"/> Completed Jobs</CardTitle></CardHeader>
-          <CardContent><div className="text-xl font-black text-slate-800 dark:text-zinc-200">{financialSummary.completeDeliveredCount} Jobs Delivered</div></CardContent>
-        </Card>
-      </div>
-
-      {/* COMPREHENSIVE FLATTENED DATA MATRIX REPORT SHEET */}
-      <Card className="shadow-sm border-border bg-card overflow-hidden">
-        <div className="p-4 border-b bg-muted/20">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-            <Layers className="w-4 h-4 text-zinc-500" />
-            Job Reports ({processedRecords.length})
-          </h3>
-        </div>
-        <Table>
-          <TableHeader className="bg-muted/40">
-            <TableRow>
-              <TableHead>Bill No.</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead>Device</TableHead>
-              <TableHead>Complaint</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Delivery Status</TableHead>
-              <TableHead className="text-right">Collected</TableHead>
-              <TableHead className="text-right">Balance</TableHead>
-              <TableHead className="text-right w-[80px]">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 4 }).map((_, idx) => (
-                <TableRow key={idx}>
-                  {Array.from({ length: 9 }).map((_, cIdx) => (
-                    <TableCell key={cIdx} className="py-4">
-                      <div className="h-4 bg-muted/60 animate-pulse rounded w-full" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : error ? (
-              <TableRow>
-                <TableCell colSpan={9} className="h-32 text-center text-xs font-semibold text-rose-500">
-                  <div className="flex flex-col items-center gap-1.5">
-                    <ShieldAlert className="w-6 h-6" />
-                    Failed to load reports: {(error as Error).message}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : processedRecords.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={9} className="h-32 text-center text-xs font-medium text-muted-foreground opacity-50">
-                  No reports found for the selected criteria.
-                </TableCell>
-              </TableRow>
-            ) : (
-              processedRecords.map((row) => {
-                const totalCollected = (row.payments?.advance_paid || 0) + (row.payments?.amount_collected || 0);
-                return (
-                  <TableRow key={row.id} className="hover:bg-muted/10 transition-colors">
-                    <TableCell className="font-mono font-bold text-xs text-foreground py-3.5">{row.bill_number}</TableCell>
-                    <TableCell>
-                      <div className="text-xs font-bold text-foreground/90">{row.customers?.name}</div>
-                      <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{row.customers?.mobile_number}</div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-semibold text-foreground/80">{row.brand}</span> <span className="opacity-60 text-xs">{row.model}</span>
-                      <div className="text-[9px] font-mono tracking-wide text-muted-foreground uppercase mt-0.5">{row.device_type}</div>
-                    </TableCell>
-                    <TableCell className="max-w-[150px] truncate text-xs text-muted-foreground">
-                      {row.complaint || <span className="opacity-50">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      <StatusCell job={row} onSave={handleStatusChange} />
-                    </TableCell>
-                    <TableCell>
-                      {["Delivered", "Delivered Return"].includes(row.status) ? (
-                        <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                          {row.status} <span className="opacity-70 font-medium lowercase">by {row.delivered_by || "Unknown"}</span>
-                        </div>
-                      ) : (
-                        <div className="text-[10px] font-bold text-muted-foreground">Pending</div>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(totalCollected)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs font-bold text-rose-600 dark:text-rose-400">
-                      {row.payments?.balance_due && row.payments.balance_due > 0 ? formatCurrency(row.payments.balance_due) : <span className="text-zinc-300 dark:text-zinc-700 font-normal text-[11px]">—</span>}
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => navigate(`/delivery?search=${row.bill_number}`)}
-                        className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold gap-1 h-8 px-2 rounded-md"
-                        title="Process Delivery"
-                      >
-                        <Truck className="w-3.5 h-3.5 stroke-[2.2]" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleOpenPrint(row)}
-                        className="text-xs text-amber-600 hover:text-amber-700 font-semibold gap-1 h-8 px-2 rounded-md"
-                        title="Reprint Bill"
-                      >
-                        <Printer className="w-3.5 h-3.5 stroke-[2.2]" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleOpenView(row)}
-                        className="text-xs text-blue-600 hover:text-blue-700 font-semibold gap-1 h-8 px-2 rounded-md"
-                        title="View Details"
-                      >
-                        <Eye className="w-3.5 h-3.5 stroke-[2.2]" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
       </Card>
 
-      {/* READ-ONLY VIEW MODAL */}
+      {/* Primary Data Table */}
+      <Card className="cockpit-card rounded-2xl overflow-hidden">
+        <div className="p-4 border-b border-border/60 flex items-center justify-between bg-muted/20">
+          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+            Ticket Ledger ({processedRecords.length} Records)
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow className="border-b border-border/80 hover:bg-transparent">
+                <TableHead className="text-xs font-bold uppercase py-3.5">Bill #</TableHead>
+                <TableHead className="text-xs font-bold uppercase py-3.5">Customer</TableHead>
+                <TableHead className="text-xs font-bold uppercase py-3.5">Asset</TableHead>
+                <TableHead className="text-xs font-bold uppercase py-3.5">Defect</TableHead>
+                <TableHead className="text-xs font-bold uppercase py-3.5">Pipeline Status</TableHead>
+                <TableHead className="text-xs font-bold uppercase py-3.5 text-right">Collected</TableHead>
+                <TableHead className="text-xs font-bold uppercase py-3.5 text-right">Balance Due</TableHead>
+                <TableHead className="text-xs font-bold uppercase py-3.5 text-center">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell colSpan={8} className="py-4">
+                      <div className="h-6 rounded bg-muted/60 animate-pulse" />
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : processedRecords.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-12 text-center text-xs text-muted-foreground">
+                    No matching service tickets found for active filter constraints.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                processedRecords.map((job) => {
+                  const collected = (job.payments?.advance_paid || 0) + (job.payments?.amount_collected || 0);
+                  const balance = job.payments?.balance_due || 0;
+                  return (
+                    <TableRow key={job.id} className="border-b border-border/40 hover:bg-muted/30 transition-colors text-xs">
+                      <TableCell className="font-mono font-bold text-foreground">
+                        #{job.bill_number}
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-bold text-foreground">{job.customers?.name || "Client"}</div>
+                        <div className="text-[10px] font-mono text-muted-foreground">{job.customers?.mobile_number}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-semibold text-foreground">{job.brand} {job.model}</div>
+                        <div className="text-[10px] text-muted-foreground capitalize">{job.device_type}</div>
+                      </TableCell>
+                      <TableCell className="max-w-[180px] truncate text-muted-foreground">
+                        {job.complaint}
+                      </TableCell>
+                      <TableCell>
+                        <StatusCell job={job} onSave={handleStatusChange} />
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(collected)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-black text-rose-500">
+                        {balance > 0 ? formatCurrency(balance) : "₹0.00"}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handleOpenView(job)}
+                            className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
+                            title="View Inspection Dossier"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handleOpenPrint(job)}
+                            className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
+                            title="Print Invoice"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+
+      {/* Ticket Details View Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="max-w-3xl border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 rounded-xl">
+        <DialogContent className="sm:max-w-md bg-card border-border">
           <DialogHeader>
-            <DialogTitle className="text-lg font-black uppercase tracking-tight flex items-center gap-2">
-              <FileText className="w-5 h-5 text-blue-600" />
-              Job Details: {selectedJob?.bill_number}
+            <DialogTitle className="text-sm font-black uppercase text-foreground">
+              Ticket Details #{selectedJob?.bill_number}
             </DialogTitle>
-            <DialogDescription className="text-xs">
-              Complete read-only overview of the service job.
-            </DialogDescription>
           </DialogHeader>
-
           {selectedJob && (
-            <div className="space-y-4 my-2 max-h-[70vh] overflow-y-auto pr-2">
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card className="shadow-none bg-slate-50/50 dark:bg-zinc-900/30 border-dashed">
-                  <CardContent className="p-4 space-y-2">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-3 border-b pb-2"><User className="w-4 h-4"/> <span className="text-xs font-bold uppercase tracking-wider">Customer Info</span></div>
-                    <p className="text-sm font-bold">{selectedJob.customers?.name}</p>
-                    <p className="text-xs font-mono"><Phone className="w-3 h-3 inline mr-1 opacity-70"/> {selectedJob.customers?.mobile_number}</p>
-                    {selectedJob.customers?.address && <p className="text-xs mt-1 text-muted-foreground">{selectedJob.customers.address}</p>}
-                  </CardContent>
-                </Card>
-
-                <Card className="shadow-none bg-slate-50/50 dark:bg-zinc-900/30 border-dashed">
-                  <CardContent className="p-4 space-y-2">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-3 border-b pb-2"><MonitorSmartphone className="w-4 h-4"/> <span className="text-xs font-bold uppercase tracking-wider">Device Info</span></div>
-                    <p className="text-sm font-bold">{selectedJob.brand} {selectedJob.model}</p>
-                    <p className="text-xs"><span className="opacity-70">Type:</span> {selectedJob.device_type}</p>
-                    {(selectedJob.imei_serial_number || selectedJob.imeiSerialNumber) && <p className="text-xs font-mono"><span className="opacity-70">IMEI:</span> {selectedJob.imei_serial_number || selectedJob.imeiSerialNumber}</p>}
-                    <p className="text-xs mt-1 text-muted-foreground"><span className="font-semibold text-foreground/70">Complaint:</span> {selectedJob.complaint}</p>
-                    {selectedJob.device_password_pin && <p className="text-xs font-mono mt-1"><span className="opacity-70">Password/PIN:</span> {selectedJob.device_password_pin}</p>}
-                    {selectedJob.accessories_received && selectedJob.accessories_received.length > 0 && (
-                      <p className="text-xs mt-1"><span className="opacity-70">Accessories:</span> {selectedJob.accessories_received.join(", ")}</p>
-                    )}
-                  </CardContent>
-                </Card>
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2 p-3 bg-muted/40 rounded-xl border border-border/60">
+                <div>
+                  <span className="text-[10px] uppercase text-muted-foreground font-bold block">Customer</span>
+                  <p className="font-bold text-foreground">{selectedJob.customers?.name}</p>
+                  <p className="font-mono text-muted-foreground">{selectedJob.customers?.mobile_number}</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] uppercase text-muted-foreground font-bold block">Device</span>
+                  <p className="font-bold text-foreground">{selectedJob.brand} {selectedJob.model}</p>
+                  <p className="text-muted-foreground capitalize">{selectedJob.device_type}</p>
+                </div>
               </div>
 
-              <Card className="shadow-none bg-slate-50/50 dark:bg-zinc-900/30 border-dashed">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground mb-3 border-b pb-2"><Receipt className="w-4 h-4"/> <span className="text-xs font-bold uppercase tracking-wider">Financial Overview</span></div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-                    <div>
-                      <p className="opacity-70 mb-1">Estimated Cost</p>
-                      <p className="font-bold font-mono">₹{selectedJob.payments?.estimated_amount || 0}</p>
-                    </div>
-                    <div>
-                      <p className="opacity-70 mb-1">Advance Paid</p>
-                      <p className="font-bold font-mono text-emerald-600">₹{selectedJob.payments?.advance_paid || 0}</p>
-                    </div>
-                    <div>
-                      <p className="opacity-70 mb-1">Collected</p>
-                      <p className="font-bold font-mono text-blue-600">₹{selectedJob.payments?.amount_collected || 0}</p>
-                    </div>
-                    <div>
-                      <p className="opacity-70 mb-1">Current Status</p>
-                      <p className="mt-1 font-bold text-[10px] uppercase">{selectedJob.status}</p>
-                    </div>
-                    
-                    {selectedJob.payments?.payment_method === "Split" && (
-                      <>
-                        <div className="col-span-2 border-t pt-2 mt-1">
-                          <p className="opacity-70 mb-1">Split (Cash)</p>
-                          <p className="font-bold font-mono">₹{selectedJob.payments?.split_cash || 0}</p>
-                        </div>
-                        <div className="col-span-2 border-t pt-2 mt-1">
-                          <p className="opacity-70 mb-1">Split (GPay)</p>
-                          <p className="font-bold font-mono">₹{selectedJob.payments?.split_gpay || 0}</p>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Delivery and Warranty Info Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card className="shadow-none bg-slate-50/50 dark:bg-zinc-900/30 border-dashed">
-                  <CardContent className="p-4 space-y-2">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-3 border-b pb-2">
-                      <Truck className="w-4 h-4"/> <span className="text-xs font-bold uppercase tracking-wider">Delivery Details</span>
-                    </div>
-                    {["Delivered", "Delivered Return"].includes(selectedJob.status) ? (
-                      <>
-                        <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{selectedJob.status}</p>
-                        <p className="text-xs"><span className="opacity-70">Delivered By:</span> {selectedJob.delivered_by || "Unknown"}</p>
-                        <p className="text-xs"><span className="opacity-70">Delivery Date:</span> {selectedJob.payments?.payment_date ? new Date(selectedJob.payments.payment_date).toLocaleDateString("en-IN") : "N/A"}</p>
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted-foreground font-medium italic">Item has not been delivered yet.</p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card className="shadow-none bg-slate-50/50 dark:bg-zinc-900/30 border-dashed">
-                  <CardContent className="p-4 space-y-2">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-3 border-b pb-2">
-                      <BadgeCheck className="w-4 h-4"/> <span className="text-xs font-bold uppercase tracking-wider">Warranty Info</span>
-                    </div>
-                    {selectedJob.warranties ? (
-                      <>
-                        <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{selectedJob.warranties.warranty_duration}</p>
-                        <p className="text-xs"><span className="opacity-70">Status:</span> {selectedJob.warranties.warranty_status}</p>
-                        {selectedJob.warranties.warranty_expiry_date && (
-                          <p className="text-xs font-mono mt-1"><span className="opacity-70">Expiry Date:</span> {new Date(selectedJob.warranties.warranty_expiry_date).toLocaleDateString("en-IN")}</p>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted-foreground font-medium italic">No warranty registered for this job.</p>
-                    )}
-                  </CardContent>
-                </Card>
+              <div className="p-3 bg-muted/20 rounded-xl border border-border/60 space-y-1">
+                <span className="text-[10px] uppercase text-muted-foreground font-bold block">Defect</span>
+                <p className="font-medium text-foreground">{selectedJob.complaint}</p>
               </div>
 
+              <div className="grid grid-cols-3 gap-2 p-3 bg-muted/40 rounded-xl border border-border/60 font-mono text-center">
+                <div>
+                  <span className="text-[9px] uppercase text-muted-foreground font-bold block">Estimate</span>
+                  <p className="font-bold">₹{selectedJob.payments?.estimated_amount || 0}</p>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-muted-foreground font-bold block">Advance</span>
+                  <p className="font-bold text-emerald-500">₹{selectedJob.payments?.advance_paid || 0}</p>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-muted-foreground font-bold block">Balance</span>
+                  <p className="font-bold text-rose-500">₹{selectedJob.payments?.balance_due || 0}</p>
+                </div>
+              </div>
             </div>
           )}
-
-          <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between border-t pt-4 border-slate-200 dark:border-zinc-800">
-            <Button variant="outline" onClick={() => setIsModalOpen(false)} className="text-xs h-9">
+          <DialogFooter className="mt-2">
+            <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
               Close
             </Button>
-            <Button onClick={() => { setIsModalOpen(false); navigate(`/edit-job/${selectedJob?.id}`); }} className="text-xs h-9 font-bold bg-blue-600 hover:bg-blue-700 text-white px-6">
-              Edit Job Details
+            <Button 
+              size="sm" 
+              onClick={() => { setIsModalOpen(false); navigate(`/edit-job/${selectedJob?.id}`); }}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
+            >
+              Edit Ticket
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* REPRINT SERVICE JOB BILL POPUP MODAL */}
+
+      {/* Print Modal */}
       <Dialog open={isPrintModalOpen} onOpenChange={setIsPrintModalOpen}>
-        {isPrintModalOpen && (
-          <style>
-            {`
-              @media print {
-                @page { size: 10cm 15cm; margin: 0; }
-                body { margin: 0; padding: 0; background: #fff; }
-                #root { display: none !important; }
-                .print-bill-container { 
-                  position: absolute !important;
-                  left: 0 !important;
-                  top: 0 !important;
-                  transform: none !important;
-                  width: 10cm !important; 
-                  height: 15cm !important; 
-                  padding: 8mm !important; 
-                  margin: 0 !important; 
-                  overflow: hidden;
-                  box-sizing: border-box;
-                }
-              }
-            `}
-          </style>
-        )}
-        <DialogContent className="sm:max-w-[400px] print-bill-container bg-white">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-card">
           <DialogHeader>
-            <DialogTitle className="text-xl font-black uppercase text-center border-b pb-3 mb-2 print-hidden">Reprint Service Job Receipt</DialogTitle>
+            <DialogTitle className="text-xs font-black uppercase text-foreground">Print Preview</DialogTitle>
           </DialogHeader>
-          
           {printJob && (
-            <div className="space-y-4 text-sm print-section">
-              <div className="text-center pb-2 border-b-2 border-dashed">
-                <h2 className="text-lg font-black uppercase">Service Job Bill</h2>
-                <div className="mt-2 mb-2 flex flex-col items-center justify-center">
-                  <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest font-bold">Bill No</span>
-                  <span className="text-3xl font-black font-mono text-foreground leading-none mt-0.5">{printJob.bill_number}</span>
-                </div>
-                <p className="text-xs text-muted-foreground font-mono">Date: {printJob.created_at?.split('T')[0]}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-0.5">Customer</p>
-                  <p className="font-semibold text-xs">{printJob.customers?.name || "N/A"}</p>
-                  <p className="font-mono text-[10px]">{printJob.customers?.mobile_number || "N/A"}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-0.5">Device</p>
-                  <p className="font-semibold text-xs">{printJob.brand} {printJob.model}</p>
-                </div>
-              </div>
-
-              <div className="bg-muted/30 p-2 rounded-lg border">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-0.5">Complaint / Issue</p>
-                <p className="text-[11px] font-medium leading-tight">{printJob.complaint}</p>
-              </div>
-
-              <div className="flex justify-between items-center py-2 border-y border-dashed">
-                <p className="text-[11px] font-bold uppercase tracking-wider">Estimated Amt</p>
-                <p className="text-sm font-black font-mono">₹{Number(printJob.payments?.estimated_amount || 0).toFixed(2)}</p>
-              </div>
-
-              <div className="text-[8px] leading-[1.2] text-muted-foreground pt-1 text-justify">
-                <strong>Terms & Conditions:</strong> Delivery date may be delayed incase of spare parts and software unavailability. All Estimate cost are Approximate &amp; subject to change on completion of the job. All articles taken for repairs are subject to owner’s risk. The company will do its best to complete job in time but not responsible for any foreseen already in completing job on the due date. Damage to the semi defective parts during servicing cannot be hold responsible while servicing certain equipments parts of modification in the circuit require will be done. The company is not responsible for goods not takes beyond 30 days from the date of job card. Old defective parts will not returned. Incase the job is not completed of estimation not being passed minimum service charges has Rs. 50.00 be paid. Only Checking Warranty.
-              </div>
+            <div className="border rounded-xl p-4 bg-white text-black">
+              <InvoicePrint
+                companySettings={{
+                  company_name: "NEW TECHNOLOGY Mobile and Laptop Service Centre",
+                  address: "Singanallur, Coimbatore, Tamil Nadu",
+                  phone: "+91 98422 12345",
+                  terms_conditions: "All repair works carry checking warranty."
+                }}
+                jobDetails={{
+                  bill_number: printJob.bill_number,
+                  created_at: printJob.created_at,
+                  device_type: printJob.device_type,
+                  brand: printJob.brand,
+                  model: printJob.model,
+                  imei_serial_number: printJob.imei_serial_number || "",
+                  accessories_received: printJob.accessories_received || [],
+                  device_condition: printJob.device_condition || "",
+                  complaint: printJob.complaint,
+                  technician_assigned: printJob.technician_assigned || "Suresh",
+                  estimated_delivery_date: printJob.estimated_delivery_date || "",
+                  status: printJob.status,
+                  billed_by: printJob.billed_by || "Suresh",
+                  customers: {
+                    name: printJob.customers?.name || "",
+                    mobile_number: printJob.customers?.mobile_number || "",
+                    address: printJob.customers?.address || "",
+                  },
+                  payments: {
+                    estimated_amount: printJob.payments?.estimated_amount || 0,
+                    advance_paid: printJob.payments?.advance_paid || 0,
+                    amount_collected: printJob.payments?.amount_collected || 0,
+                    discount: printJob.payments?.discount || 0,
+                    tax_percentage: printJob.payments?.tax_percentage || 0,
+                    balance_due: printJob.payments?.balance_due || 0,
+                    payment_method: printJob.payments?.payment_method || "Cash",
+                  }
+                }}
+              />
             </div>
           )}
-
-          <DialogFooter className="sm:justify-between mt-6 print-hidden">
-            <Button variant="outline" onClick={() => setIsPrintModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2">
-              <Printer className="w-4 h-4" /> Print Bill
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPrintModalOpen(false)}>Close</Button>
+            <Button onClick={() => window.print()} className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold">
+              <Printer className="w-4 h-4 mr-1.5" /> Print Now
             </Button>
           </DialogFooter>
         </DialogContent>

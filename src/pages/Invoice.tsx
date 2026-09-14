@@ -177,9 +177,9 @@ export default function Invoice() {
     <div className="invoice-layout">
       {/* Input Form Column */}
       <div className="invoice-sidebar print-hidden">
-        <Card className="w-full bg-white/50 backdrop-blur border-white/40 shadow-sm dark:bg-zinc-950/50 dark:border-zinc-800/50 max-h-[90vh] overflow-y-auto">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Invoice Details</CardTitle>
+        <Card className="w-full cockpit-card rounded-2xl shadow-md max-h-[90vh] overflow-y-auto">
+          <CardHeader className="pb-3 border-b border-border/60 bg-muted/20">
+            <CardTitle className="text-sm font-bold uppercase tracking-wider text-foreground">Invoice Parameters</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">

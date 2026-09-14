@@ -8,9 +8,21 @@ import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Wallet, BadgeCheck, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { 
+  Search, 
+  Wallet, 
+  Loader2, 
+  Truck, 
+  Smartphone, 
+  ShieldCheck, 
+  CheckCircle,
+  Clock,
+  ArrowRight
+} from "lucide-react";
 
 const TECHNICIANS = ["Suresh", "Sajith", "Karthik Raj", "Karthi", "Sanjay", "Anandhan", "Karthikeyan", "Unassigned"];
+const WARRANTY_DURATIONS = ["No Warranty", "1 Month", "3 Months", "6 Months", "1 Year"];
 
 interface DeliveryFormValues {
   amountCollected: number;
@@ -29,6 +41,29 @@ export default function Delivery() {
   const [searchParams] = useSearchParams();
   const [searchBill, setSearchBill] = useState(searchParams.get("search") || "");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+
+  // Fetch pending jobs queue for the empty-state feed
+  const { data: allPendingJobs = [], isLoading: loadingPending } = useQuery({
+    queryKey: ["pendingDeliveryFeed"],
+    queryFn: async () => {
+      const [jobs, customers, payments] = await Promise.all([
+        localDB.jobs.getAll(),
+        localDB.customers.getAll(),
+        localDB.payments.getAll()
+      ]);
+
+      const pending = jobs
+        .filter((j: any) => j.status !== "Delivered" && j.status !== "Delivered Return")
+        .map((j: any) => ({
+          ...j,
+          customers: customers.find((c: any) => c.id === j.customer_id) || null,
+          payments: payments.find((p: any) => p.job_id === j.id) || null,
+        }));
+
+      pending.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return pending;
+    }
+  });
 
   // Fetch specific job based on ID
   const { data: job, isLoading } = useQuery({
@@ -49,7 +84,7 @@ export default function Delivery() {
     enabled: !!activeJobId
   });
 
-  const { register, handleSubmit, watch, reset } = useForm<DeliveryFormValues>({
+  const { register, handleSubmit, watch, reset, setValue } = useForm<DeliveryFormValues>({
     defaultValues: {
       amountCollected: 0,
       deliveredBy: "Suresh",
@@ -67,20 +102,25 @@ export default function Delivery() {
       reset({
         amountCollected: job.payments?.amount_collected || 0,
         deliveredBy: job.delivered_by || "Suresh",
-        deliveryType: job.status === "Delivered Return" ? "Delivered Return" : "Delivered"
+        deliveryType: job.status === "Delivered Return" ? "Delivered Return" : "Delivered",
+        paymentMethod: (job.payments?.payment_method as any) || "Cash",
+        splitCashAmount: job.payments?.split_cash || 0,
+        splitGPayAmount: job.payments?.split_gpay || 0,
+        warrantyDuration: job.warranties?.warranty_duration || "No Warranty"
       });
     }
   }, [job, reset]);
 
   const handleSearch = React.useCallback(async () => {
+    if (!searchBill.trim()) return;
     const jobs = await localDB.jobs.getAll();
-    const found = jobs.find((j: any) => j.bill_number.toLowerCase() === searchBill.toLowerCase());
+    const found = jobs.find((j: any) => j.bill_number?.toLowerCase() === searchBill.toLowerCase().trim());
     if (found) {
       setActiveJobId(found.id);
-      toast({ title: "Job Found", description: `Loaded details for ${found.bill_number}` });
+      toast({ title: "Job Found", description: `Loaded ticket details for #${found.bill_number}` });
     } else {
       setActiveJobId(null);
-      toast({ variant: "destructive", title: "Not Found", description: `Could not find job with Bill No: ${searchBill}` });
+      toast({ variant: "destructive", title: "Ticket Not Found", description: `Could not find job with Bill No: ${searchBill}` });
     }
   }, [searchBill, toast]);
 
@@ -101,7 +141,7 @@ export default function Delivery() {
       
       const jIndex = jobs.findIndex((j: any) => j.id === job.id);
       if (jIndex > -1) {
-        jobs[jIndex].status = values.deliveryType; // Set status dynamically
+        jobs[jIndex].status = values.deliveryType;
         jobs[jIndex].delivered_by = values.deliveredBy;
         
         if (values.warrantyDuration && values.warrantyDuration !== "No Warranty") {
@@ -148,12 +188,13 @@ export default function Delivery() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["deliveryJob"] });
       queryClient.invalidateQueries({ queryKey: ["serviceJobs"] });
+      queryClient.invalidateQueries({ queryKey: ["pendingDeliveryFeed"] });
       toast({ title: "Delivery Processed", description: "Job marked as delivered and payments updated." });
       setActiveJobId(null);
       setSearchBill("");
     },
     onError: (err: Error) => {
-      toast({ variant: "destructive", title: "Error", description: err.message });
+      toast({ variant: "destructive", title: "Operation Error", description: err.message });
     }
   });
 
@@ -183,212 +224,369 @@ export default function Delivery() {
   const isAlreadyDelivered = job?.status === "Delivered" || job?.status === "Delivered Return";
 
   return (
-    <div className="p-6 space-y-6 max-w-4xl mx-auto min-h-screen pb-16 relative z-10">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-5 border-slate-200 dark:border-zinc-800">
+    <div className="space-y-6 max-w-5xl mx-auto pb-16">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/80 pb-5">
         <div>
-          <h1 className="text-2xl font-black tracking-tight uppercase bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-pink-500">Delivery & Payments</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">Search for a bill to complete payment collection and hand-over.</p>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
+              Device Handover & Payment Collection
+            </h1>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Locate customer tickets, collect remaining settlements, and register warranty SLA.
+          </p>
         </div>
-      </div>
 
-      <div className="flex items-center gap-3 max-w-md">
-        <Input 
-          placeholder="Enter Bill Number (e.g. 00001)" 
-          value={searchBill} 
-          onChange={(e) => setSearchBill(e.target.value)}
-          className="font-mono"
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-        />
-        <Button onClick={handleSearch} className="px-6 font-bold bg-blue-600 hover:bg-blue-700 text-white">
-          <Search className="w-4 h-4 mr-2" /> Search
-        </Button>
+        {/* Global Search input */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-72">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
+            <Input 
+              placeholder="Search Bill # (e.g. 00001)" 
+              value={searchBill} 
+              onChange={(e) => setSearchBill(e.target.value)}
+              className="pl-9 h-10 font-mono text-xs rounded-xl bg-card"
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            />
+          </div>
+          <Button 
+            onClick={handleSearch} 
+            className="h-10 px-4 text-xs font-bold rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-md shadow-primary/20"
+          >
+            Find Ticket
+          </Button>
+        </div>
       </div>
 
       {isLoading && (
-        <div className="flex items-center justify-center p-12">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        <div className="flex flex-col items-center justify-center p-16 gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-xs font-mono text-muted-foreground">Retrieving service ticket...</p>
         </div>
       )}
 
+      {/* Case 1: Job is loaded and already delivered */}
       {job && !isLoading && isAlreadyDelivered && (
-        <div className="space-y-6 mt-8 animate-fadeIn">
-          <div className="p-4 rounded-xl border flex flex-col gap-1 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900 shadow-sm">
-            <h3 className="text-sm font-black uppercase text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
-              <BadgeCheck className="w-4 h-4" /> Already Delivered
-            </h3>
-            <p className="text-xs font-semibold mt-1">
-              Bill No: <span className="font-mono">{job.bill_number}</span>
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Customer: {job.customers?.name} ({job.customers?.mobile_number})
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Device: {job.brand} {job.model} - {job.complaint}
-            </p>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Card className="shadow-sm border-border">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground">Delivery Details</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between border-b pb-1">
-                  <span className="text-muted-foreground">Status:</span>
-                  <span className="font-bold">{job.status}</span>
-                </div>
-                <div className="flex justify-between border-b pb-1">
-                  <span className="text-muted-foreground">Delivered By:</span>
-                  <span className="font-bold">{job.delivered_by || "Unknown"}</span>
-                </div>
-                <div className="flex justify-between border-b pb-1">
-                  <span className="text-muted-foreground">Warranty:</span>
-                  <span className="font-bold">{job.warranties?.warranty_duration || "No Warranty"}</span>
-                </div>
-                {job.warranties?.warranty_expiry_date && (
-                  <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Warranty Expiry:</span>
-                    <span className="font-bold text-blue-600">{new Date(job.warranties.warranty_expiry_date).toLocaleDateString("en-IN")}</span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="shadow-sm border-border">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground">Payment Details</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between border-b pb-1">
-                  <span className="text-muted-foreground">Payment Method:</span>
-                  <span className="font-bold">{job.payments?.payment_method || "N/A"}</span>
-                </div>
-                <div className="flex justify-between border-b pb-1">
-                  <span className="text-muted-foreground">Advance Paid:</span>
-                  <span className="font-bold">₹{job.payments?.advance_paid || 0}</span>
-                </div>
-                <div className="flex justify-between border-b pb-1">
-                  <span className="text-muted-foreground">Amount Collected:</span>
-                  <span className="font-bold text-emerald-600">₹{job.payments?.amount_collected || 0}</span>
-                </div>
-                {job.payments?.payment_method === "Split" && (
-                  <>
-                    <div className="flex justify-between border-b pb-1">
-                      <span className="text-muted-foreground">Split (Cash):</span>
-                      <span className="font-bold">₹{job.payments?.split_cash || 0}</span>
-                    </div>
-                    <div className="flex justify-between border-b pb-1">
-                      <span className="text-muted-foreground">Split (GPay):</span>
-                      <span className="font-bold">₹{job.payments?.split_gpay || 0}</span>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      )}
-
-      {job && !isLoading && !isAlreadyDelivered && (
-        <form onSubmit={handleSubmit(onFormSubmit)} className="space-y-6 animate-fadeIn mt-8">
-          
-          <div className="p-4 rounded-xl border flex flex-col gap-1 bg-slate-50 dark:bg-zinc-900 shadow-sm">
-            <h3 className="text-sm font-black uppercase">Job Summary: {job.bill_number}</h3>
-            <p className="text-xs font-semibold text-muted-foreground">{job.customers?.name} | {job.customers?.mobile_number}</p>
-            <p className="text-[11px] font-mono mt-2 opacity-80">{job.brand} {job.model} - {job.complaint}</p>
-          </div>
-
-          <Card className="shadow-sm border-border">
-            <CardHeader className="pb-3 flex flex-row items-center gap-2"><Wallet className="w-4 h-4 text-emerald-500" /><CardTitle className="text-sm uppercase tracking-wider text-muted-foreground">Billing & Payment</CardTitle></CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="text-xs font-semibold block mb-1 opacity-60">Estimated Cost (Locked)</label>
-                  <Input type="number" value={estAmt} disabled className="h-9 bg-muted/50 font-bold" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold block mb-1 opacity-60">Advance Paid (Locked)</label>
-                  <Input type="number" value={advPaid} disabled className="h-9 bg-muted/50 font-bold text-emerald-600" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold block mb-1 text-blue-600">Amount Collected (New)*</label>
-                  <Input type="number" {...register("amountCollected")} className="h-9 font-bold border-blue-500/30 bg-blue-50/20" />
-                </div>
+        <div className="space-y-6 animate-fadeIn">
+          <div className="p-4 rounded-2xl border flex items-center justify-between bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+            <div className="flex items-center gap-3">
+              <CheckCircle className="w-6 h-6" />
+              <div>
+                <h3 className="text-sm font-black uppercase">Ticket Already Handed Over</h3>
+                <p className="text-xs text-muted-foreground">
+                  Ticket <span className="font-mono font-bold text-foreground">#{job.bill_number}</span> has status:{" "}
+                  <strong className="text-emerald-600 dark:text-emerald-400">{job.status}</strong>
+                </p>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Cash Type*</label>
-                  <select {...register("paymentMethod")} className="w-full border rounded-lg p-2 bg-background text-xs font-medium h-9 border-blue-500/30 bg-blue-50/20">
-                    <option value="Cash">Cash</option>
-                    <option value="GPay">GPay</option>
-                    <option value="Split">Split (Cash & GPay)</option>
-                  </select>
-                </div>
-                {payMeth === "Split" && (
-                  <>
-                    <div>
-                      <label className="text-xs font-semibold block mb-1 text-indigo-600">Split Cash Amount*</label>
-                      <Input type="number" {...register("splitCashAmount")} className="h-9 font-bold border-indigo-500/30 bg-indigo-50/20" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold block mb-1 text-purple-600">Split GPay Amount*</label>
-                      <Input type="number" {...register("splitGPayAmount")} className="h-9 font-bold border-purple-500/30 bg-purple-50/20" />
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="p-4 rounded-xl border border-dashed flex flex-wrap justify-between items-center gap-4 bg-slate-50/50 dark:bg-zinc-900/20">
-                <div className="text-xs space-y-0.5">
-                  <div><span className="text-muted-foreground">Total Amount:</span> <span className="font-mono font-bold">₹{calculatedBalance.netTotal.toFixed(2)}</span></div>
-                  <div><span className="text-muted-foreground">Payment Status:</span> <span className="font-semibold uppercase text-blue-600">{calculatedBalance.status}</span></div>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground block">Remaining Balance</span>
-                  <span className="text-xl font-black font-mono text-rose-600">₹{calculatedBalance.balance.toFixed(2)}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm border-border">
-            <CardHeader className="pb-3 flex flex-row items-center gap-2"><BadgeCheck className="w-4 h-4 text-indigo-500" /><CardTitle className="text-sm uppercase tracking-wider text-muted-foreground">Delivery & Signature</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Delivered By*</label>
-                  <select {...register("deliveredBy")} className="w-full border rounded-lg p-2 bg-background text-xs font-medium h-9 border-blue-500/30 bg-blue-50/20">
-                    {TECHNICIANS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Delivery Type*</label>
-                  <select {...register("deliveryType")} className="w-full border rounded-lg p-2 bg-background text-xs font-medium h-9 border-blue-500/30 bg-blue-50/20">
-                    <option value="Delivered">Successful Delivery</option>
-                    <option value="Delivered Return">Return to Customer</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Add Warranty</label>
-                  <select {...register("warrantyDuration")} className="w-full border rounded-lg p-2 bg-background text-xs font-medium h-9">
-                    <option value="No Warranty">No Warranty</option>
-                    <option value="1 Month">1 Month</option>
-                    <option value="3 Months">3 Months</option>
-                    <option value="6 Months">6 Months</option>
-                    <option value="1 Year">1 Year</option>
-                  </select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="flex items-center justify-end pt-4 border-t">
-            <Button type="submit" disabled={deliveryMutation.isPending} className="h-11 px-10 font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md">
-              {deliveryMutation.isPending ? <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Processing...</span> : "Complete Delivery"}
+            </div>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => { setActiveJobId(null); setSearchBill(""); }}
+              className="text-xs rounded-xl"
+            >
+              Search Another
             </Button>
           </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Card className="cockpit-card rounded-2xl p-5 space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Client & Asset Info</h4>
+              <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between"><span className="text-muted-foreground">Client:</span> <span className="font-bold">{job.customers?.name}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Phone:</span> <span className="font-mono">{job.customers?.mobile_number}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Device:</span> <span className="font-semibold">{job.brand} {job.model}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Defect:</span> <span>{job.complaint}</span></div>
+              </div>
+            </Card>
+
+            <Card className="cockpit-card rounded-2xl p-5 space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Financial Ledger</h4>
+              <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between"><span className="text-muted-foreground">Estimated:</span> <span className="font-mono">₹{job.payments?.estimated_amount || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Advance:</span> <span className="font-mono text-emerald-500">₹{job.payments?.advance_paid || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Collected on Delivery:</span> <span className="font-mono text-emerald-500">₹{job.payments?.amount_collected || 0}</span></div>
+                <div className="flex justify-between border-t pt-1 font-bold">
+                  <span>Method:</span> <span>{job.payments?.payment_method}</span>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Case 2: Active Job Ready to be Delivered */}
+      {job && !isLoading && !isAlreadyDelivered && (
+        <form onSubmit={handleSubmit(onFormSubmit)} className="space-y-6 animate-fadeIn">
+          {/* Main Inspection Voucher Card */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 columns: Ticket & Customer Info */}
+            <div className="lg:col-span-2 space-y-6">
+              <Card className="cockpit-card rounded-2xl overflow-hidden">
+                <CardHeader className="p-4 border-b border-border/60 bg-muted/20 flex flex-row items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-primary" />
+                    <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Ticket #{job.bill_number} • {job.brand} {job.model}
+                    </CardTitle>
+                  </div>
+                  <Badge variant="outline" className="font-mono text-[10px] bg-primary/10 text-primary border-primary/20">
+                    {job.status}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="p-5 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-3 rounded-xl bg-muted/30 border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Customer</span>
+                      <p className="text-xs font-bold text-foreground">{job.customers?.name}</p>
+                      <p className="text-xs font-mono text-muted-foreground">{job.customers?.mobile_number}</p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-muted/30 border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Service Details</span>
+                      <p className="text-xs font-semibold text-foreground truncate">{job.complaint}</p>
+                      <p className="text-[10px] text-muted-foreground">Technician: {job.technician_assigned || "Suresh"}</p>
+                    </div>
+                  </div>
+
+                  {/* Delivery Mode & Operator */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    <div>
+                      <label className="text-xs font-semibold block mb-1.5 text-foreground">Handover Status</label>
+                      <select 
+                        {...register("deliveryType")} 
+                        className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
+                      >
+                        <option value="Delivered">Delivered (Repaired / Solved)</option>
+                        <option value="Delivered Return">Delivered Return (Unsolved / Returned)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold block mb-1.5 text-foreground">Delivered By</label>
+                      <select 
+                        {...register("deliveredBy")} 
+                        className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none"
+                      >
+                        {TECHNICIANS.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Warranty Duration Selector Chips */}
+                  <div>
+                    <label className="text-xs font-semibold block mb-2 text-foreground flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                      <span>Post-Service Warranty SLA</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {WARRANTY_DURATIONS.map((dur) => {
+                        const isSelected = watch("warrantyDuration") === dur;
+                        return (
+                          <button
+                            key={dur}
+                            type="button"
+                            onClick={() => setValue("warrantyDuration", dur)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                              isSelected
+                                ? "bg-primary text-primary-foreground shadow-xs shadow-primary/20"
+                                : "bg-muted/50 border border-border text-muted-foreground hover:bg-muted"
+                            }`}
+                          >
+                            {dur}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Right Column: Payment Settlement Card */}
+            <div className="space-y-6">
+              <Card className="cockpit-card rounded-2xl overflow-hidden">
+                <CardHeader className="p-4 border-b border-border/60 bg-muted/20 flex flex-row items-center gap-2">
+                  <Wallet className="w-4 h-4 text-emerald-500" />
+                  <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
+                    Collection Settlement
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 space-y-4">
+                  {/* Financial Metrics Summary */}
+                  <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Estimated Total</span>
+                      <span className="font-mono font-bold">₹{calculatedBalance.netTotal.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Advance Credited</span>
+                      <span className="font-mono font-semibold text-emerald-500">₹{Number(advPaid).toFixed(2)}</span>
+                    </div>
+                    <div className="h-px bg-border/80" />
+                    <div className="flex justify-between items-center pt-0.5">
+                      <span className="font-bold text-muted-foreground">Pending Balance</span>
+                      <span className={`text-xl font-black font-mono ${calculatedBalance.balance > 0 ? "text-rose-500" : "text-emerald-500"}`}>
+                        ₹{calculatedBalance.balance.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Payment Collector Inputs */}
+                  <div>
+                    <label className="text-xs font-semibold block mb-1 text-foreground">
+                      Amount Collected Now (₹)
+                    </label>
+                    <Input 
+                      type="number"
+                      step="any"
+                      {...register("amountCollected", { valueAsNumber: true })}
+                      className="h-10 text-sm font-mono font-bold rounded-xl"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold block mb-1 text-foreground">Payment Method</label>
+                    <select 
+                      {...register("paymentMethod")} 
+                      className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="GPay">GPay / UPI</option>
+                      <option value="Split">Split (Cash + GPay)</option>
+                    </select>
+                  </div>
+
+                  {payMeth === "Split" && (
+                    <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-muted/40 border border-border/60 animate-slideUp">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-muted-foreground block mb-1">Cash Part (₹)</label>
+                        <Input 
+                          type="number" 
+                          step="any" 
+                          {...register("splitCashAmount", { valueAsNumber: true })} 
+                          className="h-8 text-xs font-mono" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-muted-foreground block mb-1">GPay Part (₹)</label>
+                        <Input 
+                          type="number" 
+                          step="any" 
+                          {...register("splitGPayAmount", { valueAsNumber: true })} 
+                          className="h-8 text-xs font-mono" 
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="pt-3 space-y-2">
+                    <Button 
+                      type="submit" 
+                      disabled={deliveryMutation.isPending}
+                      className="w-full h-11 text-xs font-black uppercase tracking-wider bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition-all"
+                    >
+                      {deliveryMutation.isPending ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Processing...
+                        </span>
+                      ) : (
+                        "Complete Delivery & Handover"
+                      )}
+                    </Button>
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      onClick={() => setActiveJobId(null)} 
+                      className="w-full h-9 text-xs font-semibold rounded-xl"
+                    >
+                      Cancel Selection
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </form>
+      )}
+
+      {/* Case 3: Idle / No Job Selected -> Show "Pending Handover Queue" Feed */}
+      {!job && !isLoading && (
+        <div className="space-y-4 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-primary" />
+              <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Tickets Awaiting Delivery ({allPendingJobs.length})
+              </h2>
+            </div>
+            <span className="text-[11px] text-muted-foreground">Click any card to load handover voucher</span>
+          </div>
+
+          {loadingPending ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div key={idx} className="h-28 rounded-2xl bg-card border border-border animate-pulse p-4 space-y-2" />
+              ))}
+            </div>
+          ) : allPendingJobs.length === 0 ? (
+            <Card className="cockpit-card rounded-2xl p-12 text-center text-muted-foreground space-y-2">
+              <Truck className="w-10 h-10 mx-auto opacity-40 text-primary" />
+              <p className="text-sm font-bold text-foreground">All Jobs Delivered!</p>
+              <p className="text-xs">There are currently no active tickets waiting for customer pickup.</p>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {allPendingJobs.map((j: any) => {
+                const balance = Math.max(0, (j.payments?.estimated_amount || 0) - (j.payments?.advance_paid || 0));
+                return (
+                  <div
+                    key={j.id}
+                    onClick={() => {
+                      setSearchBill(j.bill_number);
+                      setActiveJobId(j.id);
+                    }}
+                    className="cockpit-card p-4 rounded-2xl border border-border hover:border-primary/50 cursor-pointer group space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-black text-sm text-foreground">
+                          #{j.bill_number}
+                        </span>
+                        <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0">
+                          {j.status}
+                        </Badge>
+                      </div>
+                      <span className="text-xs font-mono font-bold text-rose-500">
+                        ₹{balance.toFixed(2)} due
+                      </span>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-bold text-foreground truncate">
+                        {j.brand} {j.model}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground truncate">
+                        {j.customers?.name || "Customer"} • {j.customers?.mobile_number || "-"}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-border/60 text-[11px] text-muted-foreground">
+                      <span className="truncate max-w-[160px]">{j.complaint}</span>
+                      <span className="text-primary font-bold flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                        Handover <ArrowRight className="w-3 h-3" />
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
