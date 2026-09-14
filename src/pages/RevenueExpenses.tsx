@@ -12,13 +12,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { 
   PlusCircle, 
-  Trash2,
-  Calendar,
-  Users,
-  Search,
-  ArrowDownRight,
-  ArrowUpRight,
-  Layers
+  Trash2, 
+  Calendar, 
+  Users, 
+  Search, 
+  ArrowDownRight, 
+  ArrowUpRight, 
+  Layers,
+  Wallet,
+  Smartphone,
+  TrendingUp
 } from "lucide-react";
 
 interface ExpenseFormValues {
@@ -45,6 +48,9 @@ interface LedgerRow {
   out_amt: number;
   is_expense: boolean;
   timestamp: number;
+  payment_method?: string;
+  split_cash?: number;
+  split_gpay?: number;
 }
 
 export default function RevenueExpenses() {
@@ -72,8 +78,11 @@ export default function RevenueExpenses() {
   });
 
   const todayStr = new Date().toISOString().split("T")[0];
-  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const currentMonthStr = todayStr.substring(0, 7);
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [ledgerSearch, setLedgerSearch] = useState("");
+  const [salarySearch, setSalarySearch] = useState("");
+  const [salaryMonth, setSalaryMonth] = useState(currentMonthStr);
   const [activeTab, setActiveTab] = useState<"ledger" | "expense_form" | "salary_form">("ledger");
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<ExpenseFormValues>({
@@ -172,6 +181,7 @@ export default function RevenueExpenses() {
   const { ledger, openingBalance } = useMemo(() => {
     const allRows: LedgerRow[] = [];
 
+    // 1. Add Expenses / Revenues (Logs)
     expenses.forEach((e: any) => {
       const is_revenue = e.type === "Revenue";
       const in_amt = is_revenue ? (Number(e.amount) || 0) : 0;
@@ -184,43 +194,81 @@ export default function RevenueExpenses() {
         in_amt,
         out_amt,
         is_expense: !is_revenue,
+        payment_method: e.payment_method,
         timestamp: new Date(e.created_at || e.date).getTime()
       });
     });
 
+    // 2. Add Deliveries & Advances
     payments.forEach((p: any) => {
       const job = jobs.find((j: any) => j.id === p.job_id);
       const billNo = job?.bill_number || "Bill";
       const customer = job?.customers?.name || "";
 
+      // 2a. Advance Payment
       if (Number(p.advance_paid) > 0) {
+        const advDate = job?.created_at ? job.created_at.split("T")[0] : todayStr;
+        const in_amt = Number(p.advance_paid);
+        let out_amt = 0;
+        
+        if (p.payment_method === "GPay") {
+          out_amt = in_amt;
+        } else if (p.payment_method === "Split") {
+          out_amt = Number(p.split_gpay) || 0;
+        }
+
+        const summary = p.payment_method === "Split"
+          ? `Advance - ${customer || "Client"} (Split: ₹${Number(p.split_cash) || 0} Cash + ₹${Number(p.split_gpay) || 0} GPay)`
+          : `Advance - ${customer || "Client"} (${p.payment_method || "Cash"})`;
+
         allRows.push({
           id: `${p.id}-adv`,
-          date: job?.created_at ? job.created_at.split("T")[0] : todayStr,
+          date: advDate,
           bill_no: billNo,
-          summary: `Advance - ${customer} (${p.payment_method})`,
-          in_amt: Number(p.advance_paid),
-          out_amt: 0,
+          summary,
+          in_amt,
+          out_amt,
           is_expense: false,
+          payment_method: p.payment_method || "Cash",
+          split_cash: Number(p.split_cash) || 0,
+          split_gpay: Number(p.split_gpay) || 0,
           timestamp: new Date(job?.created_at || todayStr).getTime()
         });
       }
 
+      // 2b. Delivery Collection
       if (Number(p.amount_collected) > 0) {
         const dDate = p.payment_date || (job?.created_at ? job.created_at.split("T")[0] : todayStr);
+        const in_amt = Number(p.amount_collected);
+        let out_amt = 0;
+        
+        if (p.payment_method === "GPay") {
+          out_amt = in_amt;
+        } else if (p.payment_method === "Split") {
+          out_amt = Number(p.split_gpay) || 0;
+        }
+
+        const summary = p.payment_method === "Split"
+          ? `Delivery Coll. - ${customer || "Client"} (Split: ₹${Number(p.split_cash) || 0} Cash + ₹${Number(p.split_gpay) || 0} GPay)`
+          : `Delivery Coll. - ${customer || "Client"} (${p.payment_method || "Cash"})`;
+
         allRows.push({
           id: `${p.id}-del`,
           date: dDate,
           bill_no: billNo,
-          summary: `Delivery Coll. - ${customer} (${p.payment_method})`,
-          in_amt: Number(p.amount_collected),
-          out_amt: 0,
+          summary,
+          in_amt,
+          out_amt,
           is_expense: false,
+          payment_method: p.payment_method || "Cash",
+          split_cash: Number(p.split_cash) || 0,
+          split_gpay: Number(p.split_gpay) || 0,
           timestamp: new Date(dDate).getTime()
         });
       }
     });
 
+    // 3. Add Salaries
     salaries.forEach((s: any) => {
       allRows.push({
         id: s.id,
@@ -230,22 +278,54 @@ export default function RevenueExpenses() {
         in_amt: 0,
         out_amt: Number(s.amount) || 0,
         is_expense: true,
+        payment_method: s.payment_method,
         timestamp: new Date(s.created_at || s.date).getTime()
       });
     });
 
-    allRows.sort((a, b) => a.timestamp - b.timestamp);
-
+    // Calculate opening balance for selectedDate
     let priorBalance = 0;
-    allRows.forEach(row => {
-      if (row.date < selectedDate) {
-        priorBalance += (row.in_amt - row.out_amt);
+    if (selectedDate !== "ALL") {
+      allRows.forEach(row => {
+        if (row.date < selectedDate) {
+          priorBalance += (row.in_amt - row.out_amt);
+        }
+      });
+    }
+
+    let filteredRows = allRows;
+    if (selectedDate !== "ALL") {
+      filteredRows = allRows.filter(row => row.date === selectedDate);
+      filteredRows.sort((a, b) => a.timestamp - b.timestamp);
+    } else {
+      filteredRows = [...allRows].sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    return { ledger: filteredRows, openingBalance: priorBalance };
+  }, [expenses, payments, jobs, salaries, selectedDate, todayStr]);
+
+  // Revenue payment method split-up
+  const revenueSplit = useMemo(() => {
+    let cashIn = 0;
+    let gpayIn = 0;
+    let totalGrossRev = 0;
+
+    ledger.forEach(r => {
+      if (!r.is_expense && r.in_amt > 0) {
+        totalGrossRev += r.in_amt;
+        if (r.payment_method === "Split") {
+          cashIn += (r.split_cash ?? (r.in_amt - r.out_amt));
+          gpayIn += (r.split_gpay ?? r.out_amt);
+        } else if (r.payment_method === "GPay") {
+          gpayIn += r.in_amt;
+        } else {
+          cashIn += r.in_amt;
+        }
       }
     });
 
-    const dayRows = allRows.filter(row => row.date === selectedDate);
-    return { ledger: dayRows, openingBalance: priorBalance };
-  }, [expenses, payments, jobs, salaries, selectedDate, todayStr]);
+    return { cashIn, gpayIn, totalGrossRev };
+  }, [ledger]);
 
   // Daily totals
   const dailyTotals = useMemo(() => {
@@ -261,6 +341,21 @@ export default function RevenueExpenses() {
       closing: openingBalance + dayIn - dayOut
     };
   }, [ledger, openingBalance]);
+
+  // Filter staff salaries by selected month and search term
+  const filteredSalaries = useMemo(() => {
+    return salaries.filter((s: any) => {
+      if (salaryMonth !== "ALL" && !s.date?.startsWith(salaryMonth)) return false;
+      if (salarySearch.trim()) {
+        const term = salarySearch.toLowerCase().trim();
+        return (
+          s.staff_name?.toLowerCase().includes(term) ||
+          s.payment_method?.toLowerCase().includes(term)
+        );
+      }
+      return true;
+    });
+  }, [salaries, salaryMonth, salarySearch]);
 
   return (
     <div className="space-y-6 max-w-[1300px] mx-auto pb-16">
@@ -278,16 +373,27 @@ export default function RevenueExpenses() {
           </p>
         </div>
 
-        {/* Date Selector */}
-        <div className="flex items-center gap-2 bg-card border border-border/80 p-1.5 px-3 rounded-2xl shadow-xs">
-          <Calendar className="w-3.5 h-3.5 text-primary" />
-          <span className="text-[10px] font-bold uppercase text-muted-foreground">Audit Date:</span>
-          <Input 
-            type="date" 
-            value={selectedDate} 
-            onChange={(e) => setSelectedDate(e.target.value)} 
-            className="h-7 w-32 text-xs font-mono font-bold bg-muted/50 border-0 shadow-none px-2"
-          />
+        {/* Date Selector & View All Toggle */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button 
+            variant={selectedDate === "ALL" ? "default" : "outline"} 
+            size="sm" 
+            onClick={() => setSelectedDate(selectedDate === "ALL" ? todayStr : "ALL")}
+            className="h-8 text-xs font-bold rounded-xl"
+          >
+            {selectedDate === "ALL" ? "Showing All Dates" : "View All Dates"}
+          </Button>
+
+          <div className="flex items-center gap-2 bg-card border border-border/80 p-1 px-3 rounded-xl shadow-xs">
+            <Calendar className="w-3.5 h-3.5 text-primary" />
+            <span className="text-[10px] font-bold uppercase text-muted-foreground">Date:</span>
+            <Input 
+              type="date" 
+              value={selectedDate !== "ALL" ? selectedDate : todayStr} 
+              onChange={(e) => setSelectedDate(e.target.value)} 
+              className="h-7 w-32 text-xs font-mono font-bold bg-muted/50 border-0 shadow-none px-2"
+            />
+          </div>
         </div>
       </div>
 
@@ -322,7 +428,7 @@ export default function RevenueExpenses() {
           <div className="text-xl font-black font-mono text-rose-500">
             {formatCurrency(dailyTotals.outflow)}
           </div>
-          <span className="text-[10px] text-muted-foreground">Expenses & salaries</span>
+          <span className="text-[10px] text-muted-foreground">Expenses + GPay transfers</span>
         </Card>
 
         <Card className="cockpit-card rounded-2xl p-4 space-y-1">
@@ -332,7 +438,57 @@ export default function RevenueExpenses() {
           <div className={`text-xl font-black font-mono ${dailyTotals.closing >= 0 ? "text-primary" : "text-rose-600"}`}>
             {formatCurrency(dailyTotals.closing)}
           </div>
-          <span className="text-[10px] text-muted-foreground">End of day position</span>
+          <span className="text-[10px] text-muted-foreground">Actual cash in drawer</span>
+        </Card>
+      </div>
+
+      {/* Revenue Payment Method Split-Up Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between border-emerald-500/20 bg-emerald-500/5">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+              Cash Split Revenue
+            </span>
+            <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
+              {formatCurrency(revenueSplit.cashIn)}
+            </div>
+            <span className="text-[10px] text-muted-foreground">Physical cash received</span>
+          </div>
+          <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <Wallet className="w-5 h-5" />
+          </div>
+        </Card>
+
+        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between border-blue-500/20 bg-blue-500/5">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 block">
+              GPay / Online Split
+            </span>
+            <div className="text-2xl font-black font-mono text-blue-600 dark:text-blue-400 mt-0.5">
+              {formatCurrency(revenueSplit.gpayIn)}
+            </div>
+            <span className="text-[10px] text-muted-foreground">Direct online bank credit</span>
+          </div>
+          <div className="p-3 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+            <Smartphone className="w-5 h-5" />
+          </div>
+        </Card>
+
+        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+              Total Gross Revenue
+            </span>
+            <div className="text-2xl font-black font-mono text-foreground mt-0.5">
+              {formatCurrency(revenueSplit.totalGrossRev)}
+            </div>
+            <span className="text-[10px] text-muted-foreground">
+              Cash ({revenueSplit.totalGrossRev > 0 ? Math.round((revenueSplit.cashIn / revenueSplit.totalGrossRev) * 100) : 0}%) • GPay ({revenueSplit.totalGrossRev > 0 ? Math.round((revenueSplit.gpayIn / revenueSplit.totalGrossRev) * 100) : 0}%)
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-primary/10 text-primary">
+            <TrendingUp className="w-5 h-5" />
+          </div>
         </Card>
       </div>
 
@@ -397,27 +553,68 @@ export default function RevenueExpenses() {
             <Table>
               <TableHeader className="bg-muted/40">
                 <TableRow className="border-b border-border/80 hover:bg-transparent">
+                  <TableHead className="w-[50px] text-xs font-bold uppercase py-3.5">#</TableHead>
+                  <TableHead className="text-xs font-bold uppercase py-3.5">Date</TableHead>
                   <TableHead className="text-xs font-bold uppercase py-3.5">Bill #</TableHead>
                   <TableHead className="text-xs font-bold uppercase py-3.5">Particulars / Details</TableHead>
                   <TableHead className="text-xs font-bold uppercase py-3.5 text-right">Inflow (₹)</TableHead>
                   <TableHead className="text-xs font-bold uppercase py-3.5 text-right">Outflow (₹)</TableHead>
                   <TableHead className="text-xs font-bold uppercase py-3.5 text-center">Type</TableHead>
+                  <TableHead className="w-[50px] text-xs font-bold uppercase py-3.5 text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {/* OPENING BALANCE ROW */}
+                {selectedDate !== "ALL" && !ledgerSearch.trim() && (
+                  <TableRow className="bg-primary/5 border-b border-primary/20 text-xs">
+                    <TableCell className="font-mono text-muted-foreground">-</TableCell>
+                    <TableCell className="font-mono text-primary font-bold">{selectedDate}</TableCell>
+                    <TableCell className="font-mono font-bold text-muted-foreground">-</TableCell>
+                    <TableCell className="font-bold text-primary uppercase tracking-wider">
+                      Opening Balance Brought Forward
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                      {openingBalance > 0 ? formatCurrency(openingBalance) : "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-bold text-rose-500">
+                      {openingBalance < 0 ? formatCurrency(Math.abs(openingBalance)) : "-"}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className="text-[9px] font-mono font-bold uppercase bg-primary/10 text-primary border-primary/20">
+                        Balance
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center">-</TableCell>
+                  </TableRow>
+                )}
+
                 {ledger.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-12 text-center text-xs text-muted-foreground">
+                    <TableCell colSpan={8} className="py-12 text-center text-xs text-muted-foreground">
                       No financial transactions recorded on {selectedDate}.
                     </TableCell>
                   </TableRow>
                 ) : (
                   ledger
                     .filter(r => !ledgerSearch || r.summary.toLowerCase().includes(ledgerSearch.toLowerCase()) || r.bill_no.toLowerCase().includes(ledgerSearch.toLowerCase()))
-                    .map((row) => (
+                    .map((row, idx) => (
                       <TableRow key={row.id} className="border-b border-border/40 hover:bg-muted/30 text-xs">
+                        <TableCell className="font-mono text-muted-foreground">{idx + 1}</TableCell>
+                        <TableCell className="font-mono text-muted-foreground">{row.date}</TableCell>
                         <TableCell className="font-mono font-bold">{row.bill_no}</TableCell>
-                        <TableCell className="font-semibold text-foreground">{row.summary}</TableCell>
+                        <TableCell>
+                          <div className="font-semibold text-foreground">{row.summary}</div>
+                          {row.payment_method === "Split" && (
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <Badge variant="outline" className="text-[9px] font-mono text-emerald-600 bg-emerald-500/10 border-emerald-500/20">
+                                Cash: {formatCurrency(row.split_cash || 0)}
+                              </Badge>
+                              <Badge variant="outline" className="text-[9px] font-mono text-blue-600 bg-blue-500/10 border-blue-500/20">
+                                GPay: {formatCurrency(row.split_gpay || 0)}
+                              </Badge>
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                           {row.in_amt > 0 ? `+${formatCurrency(row.in_amt)}` : "-"}
                         </TableCell>
@@ -425,9 +622,43 @@ export default function RevenueExpenses() {
                           {row.out_amt > 0 ? `-${formatCurrency(row.out_amt)}` : "-"}
                         </TableCell>
                         <TableCell className="text-center">
-                          <Badge variant="outline" className={`text-[9px] font-mono font-bold uppercase ${row.is_expense ? "bg-rose-500/10 text-rose-600 border-rose-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"}`}>
-                            {row.is_expense ? "Debit" : "Credit"}
+                          <Badge 
+                            variant="outline" 
+                            className={`text-[9px] font-mono font-bold uppercase ${
+                              row.is_expense 
+                                ? "bg-rose-500/10 text-rose-600 border-rose-500/20" 
+                                : row.payment_method === "Split"
+                                ? "bg-purple-500/10 text-purple-600 border-purple-500/20"
+                                : row.payment_method === "GPay"
+                                ? "bg-blue-500/10 text-blue-600 border-blue-500/20"
+                                : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                            }`}
+                          >
+                            {row.is_expense ? (row.summary.startsWith("Salary") ? "Salary" : "Expense") : (row.payment_method || "Cash")}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {row.is_expense ? (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => {
+                                if (window.confirm("Are you sure you want to delete this log entry?")) {
+                                  if (row.summary.startsWith("Salary")) {
+                                    deleteSalaryMutation.mutate(row.id);
+                                  } else {
+                                    deleteExpenseMutation.mutate(row.id);
+                                  }
+                                }
+                              }}
+                              className="h-7 w-7 text-muted-foreground hover:text-rose-500 rounded-lg"
+                              title="Delete Record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          ) : (
+                            "-"
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
@@ -617,16 +848,41 @@ export default function RevenueExpenses() {
           {/* Salary Records Feed */}
           <div className="lg:col-span-2">
             <Card className="cockpit-card rounded-2xl overflow-hidden">
-              <div className="p-4 border-b border-border/60 bg-muted/20 flex items-center justify-between">
+              <div className="p-4 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Payroll Disbursements ({salaries.length} Records)
+                  Payroll Disbursements ({filteredSalaries.length} Records)
                 </span>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <Button 
+                    variant={salaryMonth === "ALL" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setSalaryMonth(salaryMonth === "ALL" ? currentMonthStr : "ALL")}
+                    className="h-8 text-xs font-bold rounded-xl"
+                  >
+                    {salaryMonth === "ALL" ? "All Months" : "Filter Month"}
+                  </Button>
+                  <Input 
+                    type="month"
+                    value={salaryMonth !== "ALL" ? salaryMonth : currentMonthStr}
+                    onChange={(e) => setSalaryMonth(e.target.value)}
+                    className="h-8 w-32 font-medium text-xs rounded-xl"
+                  />
+                  <div className="relative flex-1 sm:w-40">
+                    <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input 
+                      placeholder="Search staff..." 
+                      value={salarySearch}
+                      onChange={(e) => setSalarySearch(e.target.value)}
+                      className="pl-8 h-8 text-xs rounded-xl"
+                    />
+                  </div>
+                </div>
               </div>
               <div className="p-4 space-y-2">
-                {salaries.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-8">No payroll records logged yet.</p>
+                {filteredSalaries.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-8">No payroll records match the filter.</p>
                 ) : (
-                  salaries.map((s: any) => (
+                  filteredSalaries.map((s: any) => (
                     <div key={s.id} className="p-3 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs">
                       <div>
                         <p className="font-bold text-foreground">{s.staff_name}</p>
@@ -639,8 +895,13 @@ export default function RevenueExpenses() {
                         <Button
                           size="icon"
                           variant="ghost"
-                          onClick={() => deleteSalaryMutation.mutate(s.id)}
+                          onClick={() => {
+                            if (window.confirm(`Delete salary record for ${s.staff_name}?`)) {
+                              deleteSalaryMutation.mutate(s.id);
+                            }
+                          }}
                           className="h-7 w-7 text-muted-foreground hover:text-rose-500"
+                          title="Delete Salary Entry"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>

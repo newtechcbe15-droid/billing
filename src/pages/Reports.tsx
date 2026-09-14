@@ -601,6 +601,24 @@ export default function Reports() {
                   <p className="font-bold text-rose-500">₹{selectedJob.payments?.balance_due || 0}</p>
                 </div>
               </div>
+
+              {selectedJob.payments?.payment_method === "Split" && (
+                <div className="p-3 bg-primary/5 rounded-xl border border-primary/20 space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-primary block">
+                    Split Payment Method Breakdown
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-center font-mono">
+                    <div className="p-2 rounded-lg bg-background/80 border border-border/40">
+                      <span className="text-[9px] uppercase text-muted-foreground font-bold block">Cash Split</span>
+                      <p className="font-bold text-emerald-500 text-sm">₹{selectedJob.payments?.split_cash || 0}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-background/80 border border-border/40">
+                      <span className="text-[9px] uppercase text-muted-foreground font-bold block">GPay / UPI Split</span>
+                      <p className="font-bold text-blue-500 text-sm">₹{selectedJob.payments?.split_gpay || 0}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <DialogFooter className="mt-2">
