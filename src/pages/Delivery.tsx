@@ -27,6 +27,9 @@ import { useStaffRoster } from "@/lib/staffRoster";
 
 const WARRANTY_DURATIONS = ["No Warranty", "1 Month", "3 Months", "6 Months", "1 Year"];
 
+const STORAGE_BOXES = Array.from({ length: 50 }, (_, i) => `Box ${i + 1}`);
+const VENDORS = ["Kaveri", "Surya", "Bangalore", "Cell Care", "Local"];
+
 interface DeliveryFormValues {
   amountCollected: number;
   deliveredBy: string;
@@ -71,33 +74,6 @@ export default function Delivery() {
     }
   });
 
-  // Fetch stock items to provide storage box and vendor suggestions
-  const { data: stockItems = [] } = useQuery({
-    queryKey: ["allStockForDelivery"],
-    queryFn: async () => await localDB.inventory.getAll()
-  });
-
-  const existingBoxOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (let i = 1; i <= 25; i++) set.add(`Box ${i}`);
-    stockItems.forEach((s: any) => {
-      if (s.box_no && typeof s.box_no === "string" && s.box_no.trim()) {
-        set.add(s.box_no.trim());
-      }
-    });
-    return Array.from(set);
-  }, [stockItems]);
-
-  const vendorOptions = useMemo(() => {
-    const set = new Set<string>(["Kaveri", "Surya", "Bangalore", "Cell Care", "Local"]);
-    stockItems.forEach((s: any) => {
-      if (s.buyed_from && typeof s.buyed_from === "string" && s.buyed_from.trim()) {
-        set.add(s.buyed_from.trim());
-      }
-    });
-    return Array.from(set);
-  }, [stockItems]);
-
   // Fetch specific job based on ID
   const { data: job, isLoading } = useQuery({
     queryKey: ["deliveryJob", activeJobId],
@@ -130,6 +106,24 @@ export default function Delivery() {
       vendorName: ""
     }
   });
+
+  const boxOptions = useMemo(() => {
+    const set = new Set<string>(STORAGE_BOXES);
+    const existing = (job as any)?.storage_box || (job as any)?.box_no;
+    if (existing && typeof existing === "string" && existing.trim()) {
+      set.add(existing.trim());
+    }
+    return Array.from(set);
+  }, [job]);
+
+  const vendorOptions = useMemo(() => {
+    const set = new Set<string>(VENDORS);
+    const existing = (job as any)?.spare_part_supplier || (job as any)?.vendor_name;
+    if (existing && typeof existing === "string" && existing.trim()) {
+      set.add(existing.trim());
+    }
+    return Array.from(set);
+  }, [job]);
 
   // Re-hydrate form when job loads, pre-filling remaining balance
   React.useEffect(() => {
@@ -463,7 +457,14 @@ export default function Delivery() {
                     <div className="p-3 rounded-xl bg-muted/30 border border-border/60 space-y-1">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Service Details</span>
                       <p className="text-xs font-semibold text-foreground truncate">{job.complaint}</p>
-                      <p className="text-[10px] text-muted-foreground">Technician: {job.technician_assigned || "Suresh"}</p>
+                      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                        <span>Technician: {job.technician_assigned || "Suresh"}</span>
+                        {job.storage_box && (
+                          <span className="font-bold text-primary flex items-center gap-1">
+                            <Package className="w-3 h-3" /> {job.storage_box}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -503,20 +504,15 @@ export default function Delivery() {
                         </span>
                         <span className="text-[10px] text-muted-foreground font-normal">Optional</span>
                       </label>
-                      <div className="relative">
-                        <input
-                          list="delivery-storage-boxes"
-                          type="text"
-                          {...register("storageBox")}
-                          placeholder="Select or enter box #..."
-                          className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none focus:ring-2 focus:ring-primary/30"
-                        />
-                        <datalist id="delivery-storage-boxes">
-                          {existingBoxOptions.map((box) => (
-                            <option key={box} value={box} />
-                          ))}
-                        </datalist>
-                      </div>
+                      <select
+                        {...register("storageBox")}
+                        className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none focus:ring-2 focus:ring-primary/30"
+                      >
+                        <option value="">-- None / No Box --</option>
+                        {boxOptions.map((box) => (
+                          <option key={box} value={box}>{box}</option>
+                        ))}
+                      </select>
                     </div>
 
                     <div>
@@ -722,6 +718,12 @@ export default function Delivery() {
                         <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0">
                           {j.status}
                         </Badge>
+                        {j.storage_box && (
+                          <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 bg-primary/10 text-primary border-primary/20 flex items-center gap-1">
+                            <Package className="w-2.5 h-2.5" />
+                            {j.storage_box}
+                          </Badge>
+                        )}
                       </div>
                       <span className="text-xs font-mono font-bold text-rose-500">
                         ₹{balance.toFixed(2)} due
