@@ -34,6 +34,7 @@ interface DeliveryFormValues {
   splitCashAmount: number;
   splitGPayAmount: number;
   warrantyDuration: string;
+  displayChanged: boolean;
 }
 
 export default function Delivery() {
@@ -95,11 +96,12 @@ export default function Delivery() {
       paymentMethod: "Cash",
       splitCashAmount: 0,
       splitGPayAmount: 0,
-      warrantyDuration: "No Warranty"
+      warrantyDuration: "No Warranty",
+      displayChanged: false
     }
   });
 
-  // Re-hydrate form when job loads, pre-filling remaining balance
+  // Re-hydrate form when job loads, pre-filling remaining balance & display flag
   React.useEffect(() => {
     if (job) {
       const estAmt = Number(job.payments?.estimated_amount) || 0;
@@ -120,6 +122,19 @@ export default function Delivery() {
         ? existingCollected 
         : (hasSplitAmounts ? (existingSplitCash + existingSplitGPay) : remainingBalance);
 
+      const complaintLower = (job.complaint || "").toLowerCase();
+      const isDisplayJob = complaintLower.includes("display") || 
+                           complaintLower.includes("screen") || 
+                           complaintLower.includes("folder") ||
+                           complaintLower.includes("combo") ||
+                           complaintLower.includes("touch") ||
+                           complaintLower.includes("lcd") ||
+                           complaintLower.includes("oled");
+
+      const initialDisplayChanged = (job as any)?.display_changed !== undefined
+        ? Boolean((job as any)?.display_changed)
+        : isDisplayJob;
+
       reset({
         amountCollected: initialCollected,
         deliveredBy: job.delivered_by || "Suresh",
@@ -127,7 +142,8 @@ export default function Delivery() {
         paymentMethod: (job.payments?.payment_method as any) || "Cash",
         splitCashAmount: existingSplitCash,
         splitGPayAmount: existingSplitGPay,
-        warrantyDuration: job.warranties?.warranty_duration || "No Warranty"
+        warrantyDuration: job.warranties?.warranty_duration || "No Warranty",
+        displayChanged: initialDisplayChanged
       });
     }
   }, [job, reset]);
@@ -193,11 +209,12 @@ export default function Delivery() {
       const warranties = await localDB.warranties.getAll();
       const today = new Date().toISOString().split("T")[0];
       
-      // 1. Update Job Status
+      // 1. Update Job Status & Display Replacement Record
       const jIndex = jobs.findIndex((j: any) => j.id === job.id);
       if (jIndex > -1) {
         jobs[jIndex].status = values.deliveryType;
         jobs[jIndex].delivered_by = values.deliveredBy;
+        jobs[jIndex].display_changed = values.displayChanged;
         jobs[jIndex].updated_at = new Date().toISOString();
         
         if (values.warrantyDuration && values.warrantyDuration !== "No Warranty") {
@@ -284,7 +301,8 @@ export default function Delivery() {
             model: job.model,
             complaint: job.complaint,
             spare_part_supplier: job.spare_part_supplier,
-            device_type: (job as any).device_type || job.deviceType
+            device_type: (job as any).device_type || job.deviceType,
+            displayChanged: values.displayChanged
           });
         } catch (stockErr) {
           console.error("Auto inventory deduction failed:", stockErr);
@@ -478,6 +496,51 @@ export default function Delivery() {
                           <option key={t} value={t}>{t}</option>
                         ))}
                       </select>
+                    </div>
+                  </div>
+
+                  {/* Display Replacement Auto-Inventory Toggle */}
+                  <div className={`p-3.5 rounded-xl border transition-all ${
+                    watch("displayChanged") 
+                      ? "bg-primary/5 border-primary/40 shadow-xs" 
+                      : "bg-muted/20 border-border/60"
+                  }`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                          watch("displayChanged") ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        }`}>
+                          <Smartphone className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-foreground">Display Changed</span>
+                            {watch("displayChanged") ? (
+                              <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 bg-primary/10 text-primary border-primary/20">
+                                Will Deduct 1 Display
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 text-muted-foreground">
+                                No Stock Change
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {watch("displayChanged") 
+                              ? `1 Display for ${job.brand} ${job.model} will be automatically deducted from inventory upon handover.` 
+                              : "Turn ON if a new display was replaced for this device (e.g. for Dead / Diagnostic repairs)."}
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input 
+                          type="checkbox" 
+                          {...register("displayChanged")}
+                          className="sr-only peer" 
+                        />
+                        <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary shadow-inner"></div>
+                      </label>
                     </div>
                   </div>
 

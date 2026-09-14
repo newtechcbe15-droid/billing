@@ -66,8 +66,21 @@ export async function deductInventoryForJob(job: {
   complaint?: string;
   spare_part_supplier?: string;
   device_type?: string;
+  displayChanged?: boolean;
 }): Promise<InventoryDeductionResult> {
-  const partName = detectReplacedPart(job.complaint || "");
+  let partName: string | null = null;
+  
+  // If explicitly flagged as display changed (e.g. for Dead / diagnostic repairs)
+  if (job.displayChanged === true) {
+    partName = "Display";
+  } else if (job.displayChanged === false) {
+    // If explicitly turned off, do not deduct display, but still allow other components if detected
+    const detected = detectReplacedPart(job.complaint || "");
+    partName = detected === "Display" ? null : detected;
+  } else {
+    partName = detectReplacedPart(job.complaint || "");
+  }
+
   if (!partName) {
     return { deducted: false };
   }
