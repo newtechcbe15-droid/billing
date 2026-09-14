@@ -12,7 +12,8 @@ const KNOWN_TABLE_COLUMNS: Record<string, Set<string>> = {
     'device_condition', 'complaint', 'technician_assigned', 'estimated_delivery_date',
     'status', 'billed_by', 'return_reason', 'return_reason_other', 'returnReason',
     'delivered_by', 'received_by', 'customer_signature', 'delivery_remarks',
-    'spare_part_supplier', 'custom_warranty_days', 'created_at', 'updated_at'
+    'spare_part_supplier', 'custom_warranty_days', 'display_changed', 'storage_box',
+    'created_at', 'updated_at'
   ]),
   payments: new Set([
     'id', 'job_id', 'estimated_amount', 'advance_paid', 'amount_collected',
@@ -21,13 +22,35 @@ const KNOWN_TABLE_COLUMNS: Record<string, Set<string>> = {
     'created_at', 'updated_at'
   ]),
   warranties: new Set([
-    'id', 'job_id', 'warranty_duration', 'warranty_expiry_date', 'warranty_status',
+    'id', 'job_id', 'warranty_duration', 'warranty_start_date', 'warranty_expiry_date', 'warranty_status',
     'created_at', 'updated_at'
   ]),
   stock: new Set([
     'id', 'item', 'buyed_from', 'quantity', 'supported_model', 'box_no',
     'created_at', 'updated_at'
+  ]),
+  customers: new Set([
+    'id', 'name', 'mobile_number', 'alternative_number', 'email', 'address',
+    'gst_number', 'customer_notes', 'created_at', 'updated_at'
+  ]),
+  salaries: new Set([
+    'id', 'staff_name', 'amount', 'payment_method', 'date', 'notes',
+    'created_at', 'updated_at'
+  ]),
+  expenses: new Set([
+    'id', 'type', 'description', 'amount', 'payment_method', 'date',
+    'created_at', 'updated_at'
+  ]),
+  attendance: new Set([
+    'id', 'staff_name', 'date', 'status', 'check_in_time', 'check_out_time',
+    'notes', 'created_at', 'updated_at'
   ])
+};
+
+const extractMissingColumn = (errorMessage?: string): string | null => {
+  if (!errorMessage) return null;
+  const match = errorMessage.match(/Could not find the '([^']+)' column/i);
+  return match ? match[1] : null;
 };
 
 const sanitizeItemForTable = (item: any, tableName: string, now: string) => {
@@ -62,18 +85,40 @@ const createSupabaseHelper = (tableName: string) => ({
   save: async (items: any[]) => {
     if (!items || items.length === 0) return;
     const now = new Date().toISOString();
-    const sanitized = items.map((item: any) => sanitizeItemForTable(item, tableName, now));
-    const { error } = await supabase.from(tableName).upsert(sanitized);
+    let sanitized = items.map((item: any) => sanitizeItemForTable(item, tableName, now));
+    let { error } = await supabase.from(tableName).upsert(sanitized);
     if (error) {
+      const missingCol = extractMissingColumn(error.message);
+      if (missingCol) {
+        console.warn(`Column '${missingCol}' missing in table '${tableName}'. Stripping and retrying save.`);
+        KNOWN_TABLE_COLUMNS[tableName]?.delete(missingCol);
+        sanitized = items.map((item: any) => {
+          const s = sanitizeItemForTable(item, tableName, now);
+          delete s[missingCol];
+          return s;
+        });
+        const retryResult = await supabase.from(tableName).upsert(sanitized);
+        if (!retryResult.error) return;
+        error = retryResult.error;
+      }
       console.error(`Error saving to ${tableName}:`, error);
       throw error;
     }
   },
   insert: async (item: any) => {
     const now = new Date().toISOString();
-    const payload = sanitizeItemForTable(item, tableName, now);
-    const { data, error } = await supabase.from(tableName).insert(payload).select().single();
+    let payload = sanitizeItemForTable(item, tableName, now);
+    let { data, error } = await supabase.from(tableName).insert(payload).select().single();
     if (error) {
+      const missingCol = extractMissingColumn(error.message);
+      if (missingCol) {
+        console.warn(`Column '${missingCol}' missing in table '${tableName}'. Stripping and retrying insert.`);
+        KNOWN_TABLE_COLUMNS[tableName]?.delete(missingCol);
+        delete payload[missingCol];
+        const retryResult = await supabase.from(tableName).insert(payload).select().single();
+        if (!retryResult.error) return retryResult.data;
+        error = retryResult.error;
+      }
       console.error(`Error inserting into ${tableName}:`, error);
       throw error;
     }
@@ -82,7 +127,7 @@ const createSupabaseHelper = (tableName: string) => ({
   update: async (id: string, updates: any) => {
     const now = new Date().toISOString();
     const allowed = KNOWN_TABLE_COLUMNS[tableName];
-    const payload: Record<string, any> = {};
+    let payload: Record<string, any> = {};
     if (allowed) {
       for (const key of Object.keys(updates)) {
         if (allowed.has(key)) {
@@ -93,8 +138,17 @@ const createSupabaseHelper = (tableName: string) => ({
       Object.assign(payload, updates);
     }
     payload.updated_at = now;
-    const { data, error } = await supabase.from(tableName).update(payload).eq('id', id).select().maybeSingle();
+    let { data, error } = await supabase.from(tableName).update(payload).eq('id', id).select().maybeSingle();
     if (error) {
+      const missingCol = extractMissingColumn(error.message);
+      if (missingCol) {
+        console.warn(`Column '${missingCol}' missing in table '${tableName}'. Stripping and retrying update.`);
+        KNOWN_TABLE_COLUMNS[tableName]?.delete(missingCol);
+        delete payload[missingCol];
+        const retryResult = await supabase.from(tableName).update(payload).eq('id', id).select().maybeSingle();
+        if (!retryResult.error) return retryResult.data;
+        error = retryResult.error;
+      }
       console.error(`Error updating in ${tableName}:`, error);
       throw error;
     }

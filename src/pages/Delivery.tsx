@@ -220,7 +220,7 @@ export default function Delivery() {
             jobs[jIndex].delivery_remarks = currentRemarks ? `${currentRemarks} | Display Changed` : "Display Changed";
           }
         }
-        delete (jobs[jIndex] as any).display_changed;
+        jobs[jIndex].display_changed = Boolean(values.displayChanged);
         jobs[jIndex].updated_at = new Date().toISOString();
         
         if (values.warrantyDuration && values.warrantyDuration !== "No Warranty") {

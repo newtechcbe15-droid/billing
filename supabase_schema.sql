@@ -1,14 +1,65 @@
 -- ==============================================================================
--- NTCS BILLING & SERVICE CENTRE ERP - SUPABASE SCHEMA DEFINITION
+-- NTCS BILLING & SERVICE CENTRE ERP - SUPABASE SCHEMA DEFINITION & MIGRATION
 -- ==============================================================================
--- Execute this entire script in your Supabase Project's SQL Editor
--- (Dashboard -> SQL Editor -> New Query -> Paste & Run)
+-- Option A (Upgrading Existing DB): Copy SECTION 0 below and run in Supabase SQL Editor.
+-- Option B (Fresh New Database): Copy the entire file and run in Supabase SQL Editor.
 -- ==============================================================================
 
+-- ==============================================================================
+-- SECTION 0: IDEMPOTENT UPGRADE / MIGRATION SCRIPT (SAFE TO RUN ON EXISTING DB)
+-- ==============================================================================
+-- 1. Add missing columns to 'jobs' table
+ALTER TABLE IF EXISTS public.jobs ADD COLUMN IF NOT EXISTS display_changed BOOLEAN DEFAULT false;
+ALTER TABLE IF EXISTS public.jobs ADD COLUMN IF NOT EXISTS storage_box TEXT;
+
+-- 2. Add missing columns to 'salaries' table
+ALTER TABLE IF EXISTS public.salaries ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE IF EXISTS public.salaries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW());
+
+-- 3. Add missing columns to 'expenses' table
+ALTER TABLE IF EXISTS public.expenses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW());
+
+-- 4. Ensure 'attendance' table exists
+CREATE TABLE IF NOT EXISTS public.attendance (
+  id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+  staff_name TEXT NOT NULL,
+  date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Present',
+  check_in_time TEXT,
+  check_out_time TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_date ON public.attendance (date DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_staff ON public.attendance (staff_name);
+
+ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Permissive access for attendance" ON public.attendance;
+CREATE POLICY "Permissive access for attendance" ON public.attendance FOR ALL USING (true) WITH CHECK (true);
+
+-- 5. Trigger updates
+DROP TRIGGER IF EXISTS trg_attendance_updated_at ON public.attendance;
+CREATE TRIGGER trg_attendance_updated_at BEFORE UPDATE ON public.attendance
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_salaries_updated_at ON public.salaries;
+CREATE TRIGGER trg_salaries_updated_at BEFORE UPDATE ON public.salaries
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_expenses_updated_at ON public.expenses;
+CREATE TRIGGER trg_expenses_updated_at BEFORE UPDATE ON public.expenses
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ==============================================================================
 -- 1. EXTENSIONS
+-- ==============================================================================
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- ==============================================================================
 -- 2. TRIGGER HELPER FOR AUTO-UPDATING 'updated_at' TIMESTAMPS
+-- ==============================================================================
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -69,6 +120,8 @@ CREATE TABLE IF NOT EXISTS public.jobs (
   delivery_remarks TEXT,
   spare_part_supplier TEXT,                 -- e.g. 'Kaveri', 'Surya', 'Bangalore', 'Cell Care'
   custom_warranty_days INTEGER DEFAULT 0,
+  display_changed BOOLEAN DEFAULT false,    -- Tracks whether screen/display was replaced
+  storage_box TEXT,                         -- Physical workshop storage box / bin ID
   created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -130,7 +183,8 @@ CREATE TABLE IF NOT EXISTS public.expenses (
   amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
   payment_method TEXT DEFAULT 'Cash',        -- 'Cash', 'GPay', 'Bank Transfer', 'Other'
   date TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON public.expenses (date DESC);
@@ -145,7 +199,9 @@ CREATE TABLE IF NOT EXISTS public.salaries (
   amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
   payment_method TEXT DEFAULT 'Cash',        -- 'Cash', 'GPay', 'Bank Transfer'
   date TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_salaries_date ON public.salaries (date DESC);
@@ -167,6 +223,24 @@ CREATE TABLE IF NOT EXISTS public.stock (
 
 CREATE INDEX IF NOT EXISTS idx_stock_item ON public.stock (item);
 CREATE INDEX IF NOT EXISTS idx_stock_supplier ON public.stock (buyed_from);
+
+-- ------------------------------------------------------------------------------
+-- ATTENDANCE TABLE (Staff Daily Attendance Tracking)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.attendance (
+  id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+  staff_name TEXT NOT NULL,
+  date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Present',    -- 'Present', 'Half Day', 'Absent', 'On Leave'
+  check_in_time TEXT,
+  check_out_time TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_date ON public.attendance (date DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_staff ON public.attendance (staff_name);
 
 -- ------------------------------------------------------------------------------
 -- SETTINGS TABLE (Global System Sequence Counters & Shop Config)
@@ -232,8 +306,20 @@ DROP TRIGGER IF EXISTS trg_warranties_updated_at ON public.warranties;
 CREATE TRIGGER trg_warranties_updated_at BEFORE UPDATE ON public.warranties
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+DROP TRIGGER IF EXISTS trg_expenses_updated_at ON public.expenses;
+CREATE TRIGGER trg_expenses_updated_at BEFORE UPDATE ON public.expenses
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_salaries_updated_at ON public.salaries;
+CREATE TRIGGER trg_salaries_updated_at BEFORE UPDATE ON public.salaries
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 DROP TRIGGER IF EXISTS trg_stock_updated_at ON public.stock;
 CREATE TRIGGER trg_stock_updated_at BEFORE UPDATE ON public.stock
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_attendance_updated_at ON public.attendance;
+CREATE TRIGGER trg_attendance_updated_at BEFORE UPDATE ON public.attendance
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_settings_updated_at ON public.settings;
@@ -255,23 +341,44 @@ ALTER TABLE public.warranties ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.salaries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.invoices ENABLE ROW LEVEL SECURITY;
 
 -- Permissive public policies for authenticated & anon clients
 -- (allowing the React web app frontend to read, insert, update, and delete)
+DROP POLICY IF EXISTS "Permissive access for customers" ON public.customers;
 CREATE POLICY "Permissive access for customers" ON public.customers FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for jobs" ON public.jobs;
 CREATE POLICY "Permissive access for jobs" ON public.jobs FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for payments" ON public.payments;
 CREATE POLICY "Permissive access for payments" ON public.payments FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for warranties" ON public.warranties;
 CREATE POLICY "Permissive access for warranties" ON public.warranties FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for expenses" ON public.expenses;
 CREATE POLICY "Permissive access for expenses" ON public.expenses FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for salaries" ON public.salaries;
 CREATE POLICY "Permissive access for salaries" ON public.salaries FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for stock" ON public.stock;
 CREATE POLICY "Permissive access for stock" ON public.stock FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for attendance" ON public.attendance;
+CREATE POLICY "Permissive access for attendance" ON public.attendance FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for settings" ON public.settings;
 CREATE POLICY "Permissive access for settings" ON public.settings FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permissive access for invoices" ON public.invoices;
 CREATE POLICY "Permissive access for invoices" ON public.invoices FOR ALL USING (true) WITH CHECK (true);
 
 -- ==============================================================================
--- 6. REALTIME REPLICATION (Optional: allows instant live updates)
+-- 6. REALTIME REPLICATION (Allows instant live updates across devices)
 -- ==============================================================================
 DO $$
 BEGIN
@@ -284,6 +391,7 @@ BEGIN
       public.expenses,
       public.salaries,
       public.stock,
+      public.attendance,
       public.settings,
       public.invoices;
   END IF;
