@@ -23,16 +23,7 @@ import {
   CalendarCheck
 } from "lucide-react";
 import { Link } from "react-router-dom";
-
-const TECHNICIANS = [
-  "Suresh", 
-  "Sajith", 
-  "Karthik Raj", 
-  "Karthi", 
-  "Sanjay", 
-  "Anandhan", 
-  "Karthikeyan"
-];
+import { useStaffRoster } from "@/lib/staffRoster";
 
 interface SalaryFormValues {
   staffName: string;
@@ -46,6 +37,7 @@ interface SalaryFormValues {
 export default function Salary() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { staffList } = useStaffRoster();
 
   const todayStr = new Date().toISOString().split("T")[0];
   const currentMonthStr = todayStr.substring(0, 7);
@@ -287,7 +279,7 @@ export default function Salary() {
                   {...register("staffName")} 
                   className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
                 >
-                  {TECHNICIANS.map((s) => (
+                  {staffList.map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                   <option value="CUSTOM">+ Add Custom Staff Name</option>

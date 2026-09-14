@@ -21,7 +21,8 @@ import {
   ArrowRight
 } from "lucide-react";
 
-const TECHNICIANS = ["Suresh", "Sajith", "Karthik Raj", "Karthi", "Sanjay", "Anandhan", "Karthikeyan", "Unassigned"];
+import { useStaffRoster } from "@/lib/staffRoster";
+
 const WARRANTY_DURATIONS = ["No Warranty", "1 Month", "3 Months", "6 Months", "1 Year"];
 
 interface DeliveryFormValues {
@@ -37,6 +38,7 @@ interface DeliveryFormValues {
 export default function Delivery() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { staffList } = useStaffRoster();
   
   const [searchParams] = useSearchParams();
   const [searchBill, setSearchBill] = useState(searchParams.get("search") || "");
@@ -441,7 +443,7 @@ export default function Delivery() {
                         {...register("deliveredBy")} 
                         className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none"
                       >
-                        {TECHNICIANS.map((t) => (
+                        {[...staffList, "Unassigned"].map((t) => (
                           <option key={t} value={t}>{t}</option>
                         ))}
                       </select>

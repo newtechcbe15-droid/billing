@@ -32,9 +32,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
+import { useStaffRoster } from "@/lib/staffRoster";
+
 const BRAND_OPTIONS = ["Samsung", "Apple", "Realme", "Vivo", "Oppo", "Xiaomi", "Motorola", "OnePlus", "Google", "Nokia", "Asus", "Sony", "Huawei", "Honor", "Nothing", "Poco", "IQOO", "Dell", "HP", "Lenovo", "Acer", "MSI", "Microsoft", "Razer", "Gigabyte", "LG", "Fujitsu", "Panasonic", "Toshiba", "Other"];
 const ACCESSORIES_OPTIONS = ["Charger", "Adapter", "Battery", "Mouse", "Keyboard", "Laptop Bag", "SIM", "Memory Card", "Stylus", "Hard Disk", "SSD", "RAM", "Other"];
-const TECHNICIANS = ["Suresh", "Sajith", "Karthik Raj", "Karthi", "Sanjay", "Anandhan", "Karthikeyan", "Unassigned"];
 const PRESET_COMPLAINTS = ["Display", "CC", "Battery", "IC", "Waterlock", "Motherboard", "Camera", "Flashing", "Repaste", "Other"];
 
 export default function ServiceJobForm() {
@@ -44,6 +45,7 @@ export default function ServiceJobForm() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { staffList } = useStaffRoster();
   const { useCreateJobMutation, useUpdateFullJobMutation, useNextBillNumber, useSingleJobQuery } = useServiceJobs();
   
   const createJobMutation = useCreateJobMutation();
@@ -681,7 +683,7 @@ export default function ServiceJobForm() {
                       {...register("deliveredBy")} 
                       className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none"
                     >
-                      {TECHNICIANS.map((t) => (
+                      {[...staffList, "Unassigned"].map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
@@ -846,7 +848,7 @@ export default function ServiceJobForm() {
                     {...register("billedBy")} 
                     className="w-full border border-input rounded-xl px-2.5 bg-background text-xs font-semibold h-9 outline-none"
                   >
-                    {TECHNICIANS.map((t) => (
+                    {[...staffList, "Unassigned"].map((t) => (
                       <option key={t} value={t}>{t}</option>
                     ))}
                   </select>

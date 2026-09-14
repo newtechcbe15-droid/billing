@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { localDB, generateId } from "@/lib/localDB";
+import { useStaffRoster } from "@/lib/staffRoster";
 import { useToast } from "@/hooks/use-toast";
 import { exportToCSV } from "@/lib/utils";
 import { Link } from "react-router-dom";
@@ -24,19 +25,19 @@ import {
   ChevronRight,
   Sparkles,
   ArrowRight,
+  UserCog,
+  Pencil,
+  Trash2,
+  RotateCcw,
   UserPlus
 } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-
-const DEFAULT_TECHNICIANS = [
-  "Suresh",
-  "Sajith",
-  "Karthik Raj",
-  "Karthi",
-  "Sanjay",
-  "Anandhan",
-  "Karthikeyan"
-];
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter
+} from "@/components/ui/dialog";
 
 export type AttendanceStatus = "Present" | "Half Day" | "Absent" | "On Leave";
 
@@ -56,6 +57,9 @@ export default function Attendance() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Centralized Staff Roster
+  const { staffList, addStaff, updateStaff, removeStaff, resetToDefaults } = useStaffRoster();
+
   const todayStr = new Date().toISOString().split("T")[0];
   const currentMonthStr = todayStr.substring(0, 7);
 
@@ -64,33 +68,20 @@ export default function Attendance() {
   const [activeTab, setActiveTab] = useState<"daily" | "monthly">("daily");
   const [searchTerm, setSearchTerm] = useState<string>("");
 
-  // Custom staff members added locally
-  const [customStaffList, setCustomStaffList] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem("ntcs_custom_staff_names");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+  // Modals state
+  const [isManageRosterModalOpen, setIsManageRosterModalOpen] = useState(false);
+  const [newStaffInput, setNewStaffInput] = useState("");
+  const [renameModalData, setRenameModalData] = useState<{ isOpen: boolean; oldName: string; newName: string }>({
+    isOpen: false,
+    oldName: "",
+    newName: ""
   });
-
-  const [isAddStaffModalOpen, setIsAddStaffModalOpen] = useState(false);
-  const [newStaffName, setNewStaffName] = useState("");
 
   // 1. Fetch Attendance Records
   const { data: attendanceList = [] } = useQuery<AttendanceRecord[]>({
     queryKey: ["allAttendance"],
     queryFn: async () => await localDB.attendance.getAll()
   });
-
-  // All distinct staff names (defaults + customs + any found in past records)
-  const allStaffNames = useMemo(() => {
-    const set = new Set<string>([...DEFAULT_TECHNICIANS, ...customStaffList]);
-    attendanceList.forEach((r) => {
-      if (r.staff_name) set.add(r.staff_name);
-    });
-    return Array.from(set);
-  }, [customStaffList, attendanceList]);
 
   // Date Navigators
   const handlePrevDay = () => {
@@ -116,7 +107,7 @@ export default function Attendance() {
     return map;
   }, [attendanceList, selectedDate]);
 
-  // Daily statistics
+  // Daily statistics based on active roster
   const dailyStats = useMemo(() => {
     let present = 0;
     let halfDay = 0;
@@ -124,7 +115,7 @@ export default function Attendance() {
     let onLeave = 0;
     let unrecorded = 0;
 
-    allStaffNames.forEach((name) => {
+    staffList.forEach((name) => {
       const rec = dailyRecordsMap.get(name.toLowerCase());
       if (!rec) {
         unrecorded++;
@@ -139,7 +130,7 @@ export default function Attendance() {
       }
     });
 
-    const totalStaff = allStaffNames.length;
+    const totalStaff = staffList.length;
     const recordedTotal = present + halfDay + absent + onLeave;
     const presentScore = present + halfDay * 0.5;
     const rate = totalStaff > 0 ? Math.round((presentScore / totalStaff) * 100) : 0;
@@ -154,7 +145,7 @@ export default function Attendance() {
       recordedTotal,
       rate
     };
-  }, [allStaffNames, dailyRecordsMap]);
+  }, [staffList, dailyRecordsMap]);
 
   // Save or update single staff attendance record
   const saveRecordMutation = useMutation({
@@ -220,7 +211,7 @@ export default function Attendance() {
       const now = new Date().toISOString();
       const updatedList = [...allCurrent];
 
-      allStaffNames.forEach((name) => {
+      staffList.forEach((name) => {
         const existingIdx = updatedList.findIndex(
           (r: any) => r.staff_name.toLowerCase() === name.toLowerCase() && r.date === selectedDate
         );
@@ -253,7 +244,7 @@ export default function Attendance() {
       queryClient.invalidateQueries({ queryKey: ["allAttendance"] });
       toast({
         title: "All Staff Marked Present",
-        description: `Logged 100% full-day presence for ${allStaffNames.length} staff members on ${selectedDate}.`
+        description: `Logged 100% full-day presence for ${staffList.length} staff members on ${selectedDate}.`
       });
     },
     onError: (err: Error) => {
@@ -261,20 +252,124 @@ export default function Attendance() {
     }
   });
 
-  // Add custom staff member
-  const handleAddCustomStaff = () => {
-    const trimmed = newStaffName.trim();
+  // Handle Adding a Staff Member
+  const handleAddStaffSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = newStaffInput.trim();
     if (!trimmed) return;
-    if (allStaffNames.some((n) => n.toLowerCase() === trimmed.toLowerCase())) {
-      toast({ variant: "destructive", title: "Staff Member Exists", description: `${trimmed} is already in the list.` });
+
+    const success = addStaff(trimmed);
+    if (!success) {
+      toast({
+        variant: "destructive",
+        title: "Cannot Add Staff",
+        description: `"${trimmed}" already exists in the roster.`
+      });
       return;
     }
-    const updated = [...customStaffList, trimmed];
-    setCustomStaffList(updated);
-    localStorage.setItem("ntcs_custom_staff_names", JSON.stringify(updated));
-    setNewStaffName("");
-    setIsAddStaffModalOpen(false);
-    toast({ title: "Staff Added", description: `${trimmed} added to attendance roster.` });
+
+    setNewStaffInput("");
+    toast({
+      title: "Staff Added",
+      description: `"${trimmed}" is now active in the staff roster across NTCS ERP.`
+    });
+  };
+
+  // Open Rename Dialog
+  const handleOpenRename = (staffName: string) => {
+    setRenameModalData({
+      isOpen: true,
+      oldName: staffName,
+      newName: staffName
+    });
+  };
+
+  // Execute Staff Rename
+  const handleExecuteRename = async () => {
+    const { oldName, newName } = renameModalData;
+    const trimmedNew = newName.trim();
+    if (!trimmedNew || trimmedNew.toLowerCase() === oldName.toLowerCase()) {
+      setRenameModalData({ isOpen: false, oldName: "", newName: "" });
+      return;
+    }
+
+    const success = updateStaff(oldName, trimmedNew);
+    if (!success) {
+      toast({
+        variant: "destructive",
+        title: "Rename Failed",
+        description: `A staff member named "${trimmedNew}" already exists.`
+      });
+      return;
+    }
+
+    // Also migrate past attendance records from oldName to newName
+    try {
+      const allCurrent = await localDB.attendance.getAll();
+      let hasChanges = false;
+      const updated = allCurrent.map((r: any) => {
+        if (r.staff_name && r.staff_name.toLowerCase() === oldName.toLowerCase()) {
+          hasChanges = true;
+          return { ...r, staff_name: trimmedNew, updated_at: new Date().toISOString() };
+        }
+        return r;
+      });
+
+      if (hasChanges) {
+        await localDB.attendance.save(updated);
+        queryClient.invalidateQueries({ queryKey: ["allAttendance"] });
+      }
+    } catch (e) {
+      console.warn("Could not batch-update past attendance records:", e);
+    }
+
+    setRenameModalData({ isOpen: false, oldName: "", newName: "" });
+    toast({
+      title: "Staff Renamed",
+      description: `Updated "${oldName}" to "${trimmedNew}" across Attendance, Salary, and ERP modules.`
+    });
+  };
+
+  // Handle Removing Staff
+  const handleRemoveStaff = (staffName: string) => {
+    if (staffList.length <= 1) {
+      toast({
+        variant: "destructive",
+        title: "Action Not Allowed",
+        description: "You must have at least one active staff member."
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to remove "${staffName}" from the active staff roster?\n\n` +
+      `• They will no longer appear on daily attendance mark sheets or new salary forms.\n` +
+      `• Past completed jobs, delivery records, and historical payroll vouchers will remain safe in reports.`
+    );
+
+    if (confirmed) {
+      const success = removeStaff(staffName);
+      if (success) {
+        toast({
+          title: "Staff Member Removed",
+          description: `"${staffName}" was removed from the active staff roster.`
+        });
+      }
+    }
+  };
+
+  // Handle Reset Roster to Defaults
+  const handleResetRoster = () => {
+    const confirmed = window.confirm(
+      "Reset staff roster to default 7 technicians (Suresh, Sajith, Karthik Raj, Karthi, Sanjay, Anandhan, Karthikeyan)?"
+    );
+    if (confirmed) {
+      resetToDefaults();
+      toast({
+        title: "Roster Reset",
+        description: "Staff roster restored to default 7 technicians."
+      });
+    }
   };
 
   // Monthly aggregated attendance calculations
@@ -292,7 +387,7 @@ export default function Attendance() {
       }
     > = {};
 
-    allStaffNames.forEach((name) => {
+    staffList.forEach((name) => {
       staffMap[name] = {
         name,
         present: 0,
@@ -357,7 +452,7 @@ export default function Attendance() {
       totalMonthLeave,
       daysInMonth
     };
-  }, [attendanceList, selectedMonth, allStaffNames]);
+  }, [attendanceList, selectedMonth, staffList]);
 
   // Export monthly attendance to CSV
   const handleExportCSV = () => {
@@ -378,10 +473,10 @@ export default function Attendance() {
 
   // Filter staff by search term
   const filteredStaffNames = useMemo(() => {
-    if (!searchTerm.trim()) return allStaffNames;
+    if (!searchTerm.trim()) return staffList;
     const q = searchTerm.toLowerCase().trim();
-    return allStaffNames.filter((name) => name.toLowerCase().includes(q));
-  }, [allStaffNames, searchTerm]);
+    return staffList.filter((name) => name.toLowerCase().includes(q));
+  }, [staffList, searchTerm]);
 
   return (
     <div className="space-y-6 max-w-[1300px] mx-auto pb-16">
@@ -412,13 +507,14 @@ export default function Attendance() {
             </Button>
           </Link>
 
+          {/* Manage Staff Roster Modal Trigger */}
           <Button
             size="sm"
-            onClick={() => setIsAddStaffModalOpen(true)}
-            className="h-8 text-xs font-bold rounded-xl gap-1.5 bg-primary text-primary-foreground shadow-xs"
+            onClick={() => setIsManageRosterModalOpen(true)}
+            className="h-8 text-xs font-bold rounded-xl gap-1.5 bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
           >
-            <UserPlus className="w-3.5 h-3.5" />
-            Add Staff
+            <UserCog className="w-3.5 h-3.5" />
+            Manage Staff ({staffList.length})
           </Button>
         </div>
       </div>
@@ -490,7 +586,7 @@ export default function Attendance() {
               Today
             </Button>
 
-            {/* Quick 1-Click Action */}
+            {/* Quick 1-Click Bulk Action */}
             <Button
               size="sm"
               disabled={markAllPresentMutation.isPending}
@@ -658,7 +754,12 @@ export default function Attendance() {
 
           <CardContent className="p-4 space-y-3">
             {filteredStaffNames.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-12">No staff members found.</p>
+              <div className="text-center py-12 space-y-3">
+                <p className="text-xs text-muted-foreground">No staff members match the filter.</p>
+                <Button size="sm" onClick={() => setIsManageRosterModalOpen(true)} className="rounded-xl text-xs">
+                  <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add Staff Member
+                </Button>
+              </div>
             ) : (
               <div className="grid grid-cols-1 gap-2.5">
                 {filteredStaffNames.map((name, idx) => {
@@ -670,12 +771,12 @@ export default function Attendance() {
                       key={name}
                       className="p-3 rounded-xl border border-border/60 bg-muted/20 hover:bg-muted/30 transition-all flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3"
                     >
-                      {/* Staff Profile */}
-                      <div className="flex items-center gap-3 min-w-[200px]">
-                        <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary font-black text-xs flex items-center justify-center font-mono border border-primary/20">
+                      {/* Staff Profile with Inline Quick Edit & Remove */}
+                      <div className="flex items-center gap-3 min-w-[220px]">
+                        <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary font-black text-xs flex items-center justify-center font-mono border border-primary/20 shrink-0">
                           {idx + 1}
                         </div>
-                        <div>
+                        <div className="space-y-0.5">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-bold text-foreground">{name}</span>
                             {currentStatus && (
@@ -695,7 +796,27 @@ export default function Attendance() {
                               </Badge>
                             )}
                           </div>
-                          <span className="text-[10px] text-muted-foreground block">Technician / Hardware Engineer</span>
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                            <span>Technician</span>
+                            <span>•</span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRename(name)}
+                              className="text-primary hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+                              title={`Rename ${name}`}
+                            >
+                              <Pencil className="w-2.5 h-2.5" /> Rename
+                            </button>
+                            <span>•</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveStaff(name)}
+                              className="text-rose-500 hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+                              title={`Remove ${name} from roster`}
+                            >
+                              <Trash2 className="w-2.5 h-2.5" /> Remove
+                            </button>
+                          </div>
                         </div>
                       </div>
 
@@ -959,34 +1080,154 @@ export default function Attendance() {
         </Card>
       )}
 
-      {/* Add Staff Modal */}
-      <Dialog open={isAddStaffModalOpen} onOpenChange={setIsAddStaffModalOpen}>
-        <DialogContent className="sm:max-w-md rounded-2xl">
+      {/* =================================================================== */}
+      {/* MODAL 1: MANAGE STAFF ROSTER (ADD, RENAME, REMOVE, RESET) */}
+      {/* =================================================================== */}
+      <Dialog open={isManageRosterModalOpen} onOpenChange={setIsManageRosterModalOpen}>
+        <DialogContent className="sm:max-w-lg rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="text-sm font-bold uppercase tracking-wider">
-              Add New Staff Member to Roster
+            <DialogTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+              <UserCog className="w-4 h-4 text-primary" />
+              Manage Staff Roster ({staffList.length} Active Members)
             </DialogTitle>
           </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Add New Staff Input Form */}
+            <form onSubmit={handleAddStaffSubmit} className="flex items-center gap-2">
+              <Input
+                type="text"
+                placeholder="Enter new technician / staff name..."
+                value={newStaffInput}
+                onChange={(e) => setNewStaffInput(e.target.value)}
+                className="h-9 text-xs rounded-xl"
+              />
+              <Button type="submit" size="sm" className="h-9 font-bold text-xs rounded-xl gap-1 bg-primary shrink-0">
+                <UserPlus className="w-3.5 h-3.5" />
+                Add Staff
+              </Button>
+            </form>
+
+            {/* List of Staff Members with Rename and Delete buttons */}
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {staffList.map((member, idx) => (
+                <div
+                  key={member}
+                  className="flex items-center justify-between p-2.5 rounded-xl border border-border/60 bg-muted/20 hover:bg-muted/30 text-xs"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-6 h-6 rounded-lg bg-primary/10 text-primary font-mono font-bold text-[11px] flex items-center justify-center">
+                      {idx + 1}
+                    </span>
+                    <div>
+                      <p className="font-bold text-foreground">{member}</p>
+                      <p className="text-[10px] text-muted-foreground">Technician / Staff</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleOpenRename(member)}
+                      className="h-7 px-2 text-[11px] text-primary hover:bg-primary/10 rounded-lg gap-1 font-semibold"
+                      title="Rename Staff Member"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      Rename
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleRemoveStaff(member)}
+                      className="h-7 px-2 text-[11px] text-rose-500 hover:bg-rose-500/10 rounded-lg gap-1 font-semibold"
+                      title="Remove from active roster"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Safety Reset to Factory Defaults */}
+            <div className="pt-2 border-t border-border/60 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Need to restore default technicians?</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleResetRoster}
+                className="h-7 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reset Defaults
+              </Button>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              size="sm"
+              onClick={() => setIsManageRosterModalOpen(false)}
+              className="rounded-xl font-bold text-xs"
+            >
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* =================================================================== */}
+      {/* MODAL 2: RENAME STAFF MEMBER */}
+      {/* =================================================================== */}
+      <Dialog
+        open={renameModalData.isOpen}
+        onOpenChange={(open) => {
+          if (!open) setRenameModalData({ isOpen: false, oldName: "", newName: "" });
+        }}
+      >
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-primary" />
+              Rename Staff Member: {renameModalData.oldName}
+            </DialogTitle>
+          </DialogHeader>
+
           <div className="space-y-3 py-2">
-            <label className="text-xs font-semibold block text-foreground">Staff Member Full Name</label>
+            <label className="text-xs font-semibold block text-foreground">Updated Full Name</label>
             <Input
               type="text"
-              placeholder="e.g. Ramesh Kumar"
-              value={newStaffName}
-              onChange={(e) => setNewStaffName(e.target.value)}
+              value={renameModalData.newName}
+              onChange={(e) =>
+                setRenameModalData((prev) => ({ ...prev, newName: e.target.value }))
+              }
+              placeholder="Enter updated name..."
               className="h-10 text-xs rounded-xl"
               autoFocus
             />
             <p className="text-[11px] text-muted-foreground">
-              This staff member will appear immediately on the daily mark sheet and monthly attendance calculations.
+              Renaming will update this employee's name across Attendance, Salary, Job assignment, and historical records.
             </p>
           </div>
+
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setIsAddStaffModalOpen(false)} className="rounded-xl">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRenameModalData({ isOpen: false, oldName: "", newName: "" })}
+              className="rounded-xl text-xs"
+            >
               Cancel
             </Button>
-            <Button size="sm" onClick={handleAddCustomStaff} className="rounded-xl font-bold bg-primary">
-              Add Staff Member
+            <Button
+              size="sm"
+              onClick={handleExecuteRename}
+              className="rounded-xl font-bold text-xs bg-primary text-primary-foreground"
+            >
+              Save New Name
             </Button>
           </DialogFooter>
         </DialogContent>
