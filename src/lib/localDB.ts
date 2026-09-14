@@ -170,6 +170,7 @@ export const localDB = {
   expenses: createSupabaseHelper('expenses'),
   salaries: createSupabaseHelper('salaries'),
   stock: createSupabaseHelper('stock'),
+  inventory: createSupabaseHelper('stock'),
   attendance: createAttendanceHelper(),
   // Local Database for Invoices only - completely independent from Supabase
   invoices: localInvoiceDB,

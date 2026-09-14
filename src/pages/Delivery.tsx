@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { localDB, generateId } from "@/lib/localDB";
 import { useToast } from "@/hooks/use-toast";
@@ -18,7 +18,9 @@ import {
   ShieldCheck, 
   CheckCircle,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Package,
+  Store
 } from "lucide-react";
 
 import { useStaffRoster } from "@/lib/staffRoster";
@@ -33,6 +35,8 @@ interface DeliveryFormValues {
   splitCashAmount: number;
   splitGPayAmount: number;
   warrantyDuration: string;
+  storageBox?: string;
+  vendorName?: string;
 }
 
 export default function Delivery() {
@@ -67,6 +71,33 @@ export default function Delivery() {
     }
   });
 
+  // Fetch stock items to provide storage box and vendor suggestions
+  const { data: stockItems = [] } = useQuery({
+    queryKey: ["allStockForDelivery"],
+    queryFn: async () => await localDB.inventory.getAll()
+  });
+
+  const existingBoxOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (let i = 1; i <= 25; i++) set.add(`Box ${i}`);
+    stockItems.forEach((s: any) => {
+      if (s.box_no && typeof s.box_no === "string" && s.box_no.trim()) {
+        set.add(s.box_no.trim());
+      }
+    });
+    return Array.from(set);
+  }, [stockItems]);
+
+  const vendorOptions = useMemo(() => {
+    const set = new Set<string>(["Kaveri", "Surya", "Bangalore", "Cell Care", "Local"]);
+    stockItems.forEach((s: any) => {
+      if (s.buyed_from && typeof s.buyed_from === "string" && s.buyed_from.trim()) {
+        set.add(s.buyed_from.trim());
+      }
+    });
+    return Array.from(set);
+  }, [stockItems]);
+
   // Fetch specific job based on ID
   const { data: job, isLoading } = useQuery({
     queryKey: ["deliveryJob", activeJobId],
@@ -94,7 +125,9 @@ export default function Delivery() {
       paymentMethod: "Cash",
       splitCashAmount: 0,
       splitGPayAmount: 0,
-      warrantyDuration: "No Warranty"
+      warrantyDuration: "No Warranty",
+      storageBox: "",
+      vendorName: ""
     }
   });
 
@@ -126,7 +159,9 @@ export default function Delivery() {
         paymentMethod: (job.payments?.payment_method as any) || "Cash",
         splitCashAmount: existingSplitCash,
         splitGPayAmount: existingSplitGPay,
-        warrantyDuration: job.warranties?.warranty_duration || "No Warranty"
+        warrantyDuration: job.warranties?.warranty_duration || "No Warranty",
+        storageBox: (job as any)?.storage_box || (job as any)?.box_no || "",
+        vendorName: (job as any)?.spare_part_supplier || (job as any)?.vendor_name || ""
       });
     }
   }, [job, reset]);
@@ -192,12 +227,19 @@ export default function Delivery() {
       const warranties = await localDB.warranties.getAll();
       const today = new Date().toISOString().split("T")[0];
       
-      // 1. Update Job Status
+      // 1. Update Job Status & Optional Storage Box / Vendor
       const jIndex = jobs.findIndex((j: any) => j.id === job.id);
       if (jIndex > -1) {
         jobs[jIndex].status = values.deliveryType;
         jobs[jIndex].delivered_by = values.deliveredBy;
         jobs[jIndex].updated_at = new Date().toISOString();
+        if (values.storageBox !== undefined) {
+          jobs[jIndex].storage_box = values.storageBox.trim();
+        }
+        if (values.vendorName !== undefined) {
+          jobs[jIndex].spare_part_supplier = values.vendorName.trim();
+          jobs[jIndex].vendor_name = values.vendorName.trim();
+        }
         
         if (values.warrantyDuration && values.warrantyDuration !== "No Warranty") {
           const wDate = new Date();
@@ -446,6 +488,52 @@ export default function Delivery() {
                       >
                         {[...staffList, "Unassigned"].map((t) => (
                           <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Storage Box & Vendor Selection (Optional) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                    <div>
+                      <label className="text-xs font-semibold block mb-1.5 text-foreground flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <Package className="w-3.5 h-3.5 text-primary" />
+                          <span>Storage Box / Bin #</span>
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-normal">Optional</span>
+                      </label>
+                      <div className="relative">
+                        <input
+                          list="delivery-storage-boxes"
+                          type="text"
+                          {...register("storageBox")}
+                          placeholder="Select or enter box #..."
+                          className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none focus:ring-2 focus:ring-primary/30"
+                        />
+                        <datalist id="delivery-storage-boxes">
+                          {existingBoxOptions.map((box) => (
+                            <option key={box} value={box} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold block mb-1.5 text-foreground flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <Store className="w-3.5 h-3.5 text-primary" />
+                          <span>Vendor Name</span>
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-normal">Optional</span>
+                      </label>
+                      <select
+                        {...register("vendorName")}
+                        className="w-full border border-input rounded-xl px-3 bg-background text-xs font-semibold h-10 outline-none focus:ring-2 focus:ring-primary/30"
+                      >
+                        <option value="">-- None / No Vendor --</option>
+                        {vendorOptions.map((v) => (
+                          <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
                     </div>
