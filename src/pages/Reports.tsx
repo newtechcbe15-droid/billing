@@ -17,7 +17,11 @@ import {
   Lock, 
   Calendar,
   CheckCircle2,
-  Clock
+  Clock,
+  Users,
+  Wallet,
+  Smartphone,
+  BarChart3
 } from "lucide-react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { InvoicePrint } from "@/components/service-job/InvoicePrint";
@@ -128,6 +132,7 @@ export default function Reports() {
   const [deviceFilter, setDeviceFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [globalSearch, setGlobalSearch] = useState<string>(searchParams.get("q") || "");
+  const [techSearch, setTechSearch] = useState<string>("");
   
   // Modals
   const [selectedJob, setSelectedJob] = useState<any | null>(null);
@@ -288,6 +293,92 @@ export default function Reports() {
 
     return { day, week, month, year };
   }, [reportsData]);
+
+  // Staff Collection Analysis by timeframe & filters
+  const staffCollectionsData = useMemo(() => {
+    let grandTotal = 0;
+    let grandCash = 0;
+    let grandGPay = 0;
+    let grandTickets = 0;
+
+    const staffMap: Record<string, {
+      name: string;
+      ticketsCount: number;
+      cashCollected: number;
+      gpayCollected: number;
+      totalCollected: number;
+    }> = {};
+
+    processedRecords.forEach((job: any) => {
+      const p = job.payments;
+      if (!p) return;
+
+      const isSplit = p.payment_method === "Split";
+      const totalSplit = (Number(p.split_cash) || 0) + (Number(p.split_gpay) || 0);
+      const delAmt = Number(p.amount_collected) > 0 
+        ? Number(p.amount_collected) 
+        : (isSplit && totalSplit > 0 ? totalSplit : 0);
+      const advAmt = Number(p.advance_paid) || 0;
+      const totalJobCollected = delAmt + advAmt;
+
+      if (totalJobCollected > 0 || job.status === "Delivered") {
+        const staff = job.delivered_by || job.technician_assigned || "Unassigned";
+        if (!staffMap[staff]) {
+          staffMap[staff] = {
+            name: staff,
+            ticketsCount: 0,
+            cashCollected: 0,
+            gpayCollected: 0,
+            totalCollected: 0
+          };
+        }
+
+        staffMap[staff].ticketsCount += 1;
+        grandTickets += 1;
+
+        let cashPortion = 0;
+        let gpayPortion = 0;
+
+        if (p.payment_method === "Cash") {
+          cashPortion = totalJobCollected;
+        } else if (p.payment_method === "GPay") {
+          gpayPortion = totalJobCollected;
+        } else if (isSplit) {
+          cashPortion = Number(p.split_cash) || 0;
+          gpayPortion = Number(p.split_gpay) || 0;
+        } else {
+          cashPortion = totalJobCollected;
+        }
+
+        staffMap[staff].cashCollected += cashPortion;
+        staffMap[staff].gpayCollected += gpayPortion;
+        staffMap[staff].totalCollected += (cashPortion + gpayPortion);
+
+        grandCash += cashPortion;
+        grandGPay += gpayPortion;
+        grandTotal += (cashPortion + gpayPortion);
+      }
+    });
+
+    const staffList = Object.values(staffMap).map((st) => ({
+      ...st,
+      percent: grandTotal > 0 ? Math.round((st.totalCollected / grandTotal) * 100) : 0
+    })).sort((a, b) => b.totalCollected - a.totalCollected);
+
+    return {
+      grandTotal,
+      grandCash,
+      grandGPay,
+      grandTickets,
+      staffList
+    };
+  }, [processedRecords]);
+
+  const filteredStaffCollections = useMemo(() => {
+    if (!techSearch.trim()) return staffCollectionsData.staffList;
+    const q = techSearch.toLowerCase().trim();
+    return staffCollectionsData.staffList.filter(st => st.name.toLowerCase().includes(q));
+  }, [staffCollectionsData.staffList, techSearch]);
 
   // Export CSV
   const triggerSpreadsheetExport = () => {
@@ -459,6 +550,147 @@ export default function Reports() {
             onChange={(e) => setGlobalSearch(e.target.value)}
             className="pl-9 h-9 text-xs rounded-xl bg-background"
           />
+        </div>
+      </Card>
+
+      {/* Technician Collection Performance Card */}
+      <Card className="cockpit-card rounded-2xl overflow-hidden shadow-lg border-border/70">
+        <div className="p-4 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <Users className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-foreground block">
+                Total Amount Collected by Staff ({timeframe === "all" ? "All Time" : timeframe === "today" ? "Today" : timeframe === "month" ? "This Month" : "This Year"})
+              </span>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Total repair bills and delivery collections accumulated per technician.
+              </p>
+            </div>
+          </div>
+
+          <div className="relative w-full sm:w-56">
+            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input 
+              placeholder="Search technician..."
+              value={techSearch}
+              onChange={(e) => setTechSearch(e.target.value)}
+              className="pl-8 h-8 text-xs rounded-xl bg-background"
+            />
+          </div>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Summary Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-xl bg-muted/40 border border-border/60">
+            <div className="space-y-0.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                Total Staff Collections
+              </span>
+              <div className="text-base sm:text-lg font-black font-mono text-emerald-600 dark:text-emerald-400">
+                {formatCurrency(staffCollectionsData.grandTotal)}
+              </div>
+            </div>
+
+            <div className="space-y-0.5 border-l border-border/60 pl-2.5">
+              <div className="flex items-center gap-1">
+                <Wallet className="w-3 h-3 text-emerald-500" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+                  Cash Collected
+                </span>
+              </div>
+              <div className="text-base sm:text-lg font-black font-mono text-foreground">
+                {formatCurrency(staffCollectionsData.grandCash)}
+              </div>
+            </div>
+
+            <div className="space-y-0.5 border-l border-border/60 pl-2.5">
+              <div className="flex items-center gap-1">
+                <Smartphone className="w-3 h-3 text-blue-500" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600">
+                  GPay / UPI
+                </span>
+              </div>
+              <div className="text-base sm:text-lg font-black font-mono text-foreground">
+                {formatCurrency(staffCollectionsData.grandGPay)}
+              </div>
+            </div>
+
+            <div className="space-y-0.5 border-l border-border/60 pl-2.5">
+              <div className="flex items-center gap-1">
+                <BarChart3 className="w-3 h-3 text-primary" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Tickets Handled
+                </span>
+              </div>
+              <div className="text-base sm:text-lg font-black font-mono text-foreground">
+                {staffCollectionsData.grandTickets} <span className="text-xs font-normal text-muted-foreground">tickets</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b border-border/60 hover:bg-transparent text-[11px] font-bold uppercase text-muted-foreground bg-muted/10">
+                  <TableHead className="w-10">#</TableHead>
+                  <TableHead>Staff Member</TableHead>
+                  <TableHead className="text-center">Tickets Handled</TableHead>
+                  <TableHead className="text-right">Cash Collected</TableHead>
+                  <TableHead className="text-right">GPay / Online</TableHead>
+                  <TableHead className="text-right">Total Collected</TableHead>
+                  <TableHead className="w-28 text-center">Collection Share</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredStaffCollections.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground text-xs">
+                      No revenue collections recorded for this filter.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredStaffCollections.map((st, idx) => (
+                    <TableRow key={st.name} className="border-b border-border/40 hover:bg-muted/30 text-xs">
+                      <TableCell className="font-mono text-muted-foreground">{idx + 1}</TableCell>
+                      <TableCell>
+                        <span className="font-bold text-foreground">{st.name}</span>
+                        <span className="text-[10px] text-muted-foreground block">Technician</span>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant="outline" className="font-mono text-[10px] bg-muted/30">
+                          {st.ticketsCount} {st.ticketsCount === 1 ? "ticket" : "tickets"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                        {st.cashCollected > 0 ? formatCurrency(st.cashCollected) : "₹0"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold text-blue-600 dark:text-blue-400">
+                        {st.gpayCollected > 0 ? formatCurrency(st.gpayCollected) : "₹0"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-black text-foreground">
+                        {formatCurrency(st.totalCollected)}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-muted-foreground">{st.percent}%</span>
+                          <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                            <div
+                              className="bg-emerald-500 h-full rounded-full"
+                              style={{ width: `${st.percent}%` }}
+                              title={`${st.percent}% of total collection`}
+                            />
+                          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </div>
       </Card>
 

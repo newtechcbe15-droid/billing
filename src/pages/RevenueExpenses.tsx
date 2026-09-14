@@ -33,12 +33,6 @@ interface ExpenseFormValues {
   date: string;
 }
 
-interface SalaryFormValues {
-  staffName: string;
-  amount: number;
-  paymentMethod: "Cash" | "GPay" | "Bank Transfer";
-  date: string;
-}
 
 interface LedgerRow {
   id: string;
@@ -79,26 +73,14 @@ export default function RevenueExpenses() {
   });
 
   const todayStr = new Date().toISOString().split("T")[0];
-  const currentMonthStr = todayStr.substring(0, 7);
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [ledgerSearch, setLedgerSearch] = useState("");
-  const [salarySearch, setSalarySearch] = useState("");
-  const [salaryMonth, setSalaryMonth] = useState(currentMonthStr);
-  const [activeTab, setActiveTab] = useState<"ledger" | "expense_form" | "salary_form">("ledger");
+  const [activeTab, setActiveTab] = useState<"ledger" | "expense_form">("ledger");
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<ExpenseFormValues>({
     defaultValues: {
       type: "Expense",
       description: "",
-      amount: 0,
-      paymentMethod: "Cash",
-      date: todayStr
-    }
-  });
-
-  const { register: registerSalary, handleSubmit: handleSubmitSalary, reset: resetSalary } = useForm<SalaryFormValues>({
-    defaultValues: {
-      staffName: "Suresh",
       amount: 0,
       paymentMethod: "Cash",
       date: todayStr
@@ -138,32 +120,6 @@ export default function RevenueExpenses() {
     }
   });
 
-  const onAddExpense = (data: ExpenseFormValues) => {
-    addExpenseMutation.mutate(data);
-  };
-
-  const addSalaryMutation = useMutation({
-    mutationFn: async (values: SalaryFormValues) => {
-      const salList = await localDB.salaries.getAll();
-      const newSal = {
-        id: generateId(),
-        staff_name: values.staffName,
-        amount: Number(values.amount),
-        payment_method: values.paymentMethod,
-        date: todayStr,
-        created_at: new Date().toISOString()
-      };
-      salList.push(newSal);
-      await localDB.salaries.save(salList);
-      return newSal;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["allSalaries"] });
-      toast({ title: "Salary Logged", description: "Staff payment recorded." });
-      resetSalary({ staffName: "Suresh", amount: 0, paymentMethod: "Cash", date: todayStr });
-    }
-  });
-
   const deleteSalaryMutation = useMutation({
     mutationFn: async (id: string) => {
       await localDB.salaries.delete(id);
@@ -174,8 +130,8 @@ export default function RevenueExpenses() {
     }
   });
 
-  const onAddSalary = (data: SalaryFormValues) => {
-    addSalaryMutation.mutate(data);
+  const onAddExpense = (data: ExpenseFormValues) => {
+    addExpenseMutation.mutate(data);
   };
 
   // Build the unified ledger
@@ -359,21 +315,6 @@ export default function RevenueExpenses() {
     };
   }, [ledger, openingBalance]);
 
-  // Filter staff salaries by selected month and search term
-  const filteredSalaries = useMemo(() => {
-    return salaries.filter((s: any) => {
-      if (salaryMonth !== "ALL" && !s.date?.startsWith(salaryMonth)) return false;
-      if (salarySearch.trim()) {
-        const term = salarySearch.toLowerCase().trim();
-        return (
-          s.staff_name?.toLowerCase().includes(term) ||
-          s.payment_method?.toLowerCase().includes(term)
-        );
-      }
-      return true;
-    });
-  }, [salaries, salaryMonth, salarySearch]);
-
   return (
     <div className="space-y-6 max-w-[1300px] mx-auto pb-16">
       {/* Header */}
@@ -382,11 +323,11 @@ export default function RevenueExpenses() {
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
-              Cash Flow Ledger & Staff Payroll
+              Daily Cash Flow Ledger
             </h1>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Monitor daily cash registers, petty expenses, inflows, and staff salary disbursements.
+            Monitor daily cash registers, petty expenses, and revenue inflows.
           </p>
         </div>
 
@@ -535,18 +476,6 @@ export default function RevenueExpenses() {
           Record Expense / Revenue
         </button>
 
-        <button
-          onClick={() => setActiveTab("salary_form")}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-            activeTab === "salary_form"
-              ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted"
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          Staff Payroll
-        </button>
-
         <Link to="/salary" className="ml-auto">
           <Button
             variant="outline"
@@ -554,7 +483,7 @@ export default function RevenueExpenses() {
             className="h-8 text-xs font-bold rounded-xl flex items-center gap-1.5 border-primary/40 text-primary hover:bg-primary/10"
           >
             <Users className="w-3.5 h-3.5" />
-            Full Monthly Report & Management →
+            Staff Salary & Payroll →
           </Button>
         </Link>
       </div>
@@ -802,133 +731,6 @@ export default function RevenueExpenses() {
                           variant="ghost"
                           onClick={() => deleteExpenseMutation.mutate(item.id)}
                           className="h-7 w-7 text-muted-foreground hover:text-rose-500"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: STAFF PAYROLL */}
-      {activeTab === "salary_form" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
-          {/* Payroll Entry Form */}
-          <Card className="cockpit-card rounded-2xl overflow-hidden">
-            <CardHeader className="p-4 border-b border-border/60 bg-muted/20">
-              <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
-                Disburse Staff Salary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-5">
-              <form onSubmit={handleSubmitSalary(onAddSalary)} className="space-y-4">
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Staff Member</label>
-                  <select 
-                    {...registerSalary("staffName")} 
-                    className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
-                  >
-                    {["Suresh", "Sajith", "Karthik Raj", "Karthi", "Sanjay", "Anandhan", "Karthikeyan"].map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Salary Amount (₹)</label>
-                  <Input 
-                    type="number"
-                    step="any"
-                    {...registerSalary("amount", { required: true, min: 1 })} 
-                    placeholder="0.00"
-                    className="h-10 text-sm font-mono font-bold rounded-xl"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Payment Source & Ledger Impact</label>
-                  <select 
-                    {...registerSalary("paymentMethod")} 
-                    className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
-                  >
-                    <option value="Cash">Cash (Shop Drawer - Enters Daily Ledger)</option>
-                    <option value="GPay from MD">GPay from MD (Direct from MD - Non-Ledger)</option>
-                  </select>
-                </div>
-
-                <Button 
-                  type="submit" 
-                  disabled={addSalaryMutation.isPending}
-                  className="w-full h-11 font-bold text-xs uppercase tracking-wider rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-500/20"
-                >
-                  Record Salary Payment
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-
-          {/* Salary Records Feed */}
-          <div className="lg:col-span-2">
-            <Card className="cockpit-card rounded-2xl overflow-hidden">
-              <div className="p-4 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Payroll Disbursements ({filteredSalaries.length} Records)
-                </span>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <Button 
-                    variant={salaryMonth === "ALL" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setSalaryMonth(salaryMonth === "ALL" ? currentMonthStr : "ALL")}
-                    className="h-8 text-xs font-bold rounded-xl"
-                  >
-                    {salaryMonth === "ALL" ? "All Months" : "Filter Month"}
-                  </Button>
-                  <Input 
-                    type="month"
-                    value={salaryMonth !== "ALL" ? salaryMonth : currentMonthStr}
-                    onChange={(e) => setSalaryMonth(e.target.value)}
-                    className="h-8 w-32 font-medium text-xs rounded-xl"
-                  />
-                  <div className="relative flex-1 sm:w-40">
-                    <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
-                    <Input 
-                      placeholder="Search staff..." 
-                      value={salarySearch}
-                      onChange={(e) => setSalarySearch(e.target.value)}
-                      className="pl-8 h-8 text-xs rounded-xl"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="p-4 space-y-2">
-                {filteredSalaries.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-8">No payroll records match the filter.</p>
-                ) : (
-                  filteredSalaries.map((s: any) => (
-                    <div key={s.id} className="p-3 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs">
-                      <div>
-                        <p className="font-bold text-foreground">{s.staff_name}</p>
-                        <p className="text-[10px] text-muted-foreground">{s.date} • {s.payment_method}</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono font-bold text-rose-500">
-                          -{formatCurrency(Number(s.amount))}
-                        </span>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => {
-                            if (window.confirm(`Delete salary record for ${s.staff_name}?`)) {
-                              deleteSalaryMutation.mutate(s.id);
-                            }
-                          }}
-                          className="h-7 w-7 text-muted-foreground hover:text-rose-500"
-                          title="Delete Salary Entry"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>

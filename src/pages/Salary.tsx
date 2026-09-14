@@ -19,8 +19,7 @@ import {
   Trash2, 
   BarChart3, 
   Calendar,
-  Loader2,
-  TrendingUp
+  Loader2
 } from "lucide-react";
 
 const TECHNICIANS = [
@@ -51,25 +50,12 @@ export default function Salary() {
 
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
   const [searchTerm, setSearchTerm] = useState("");
-  const [collectionsSearch, setCollectionsSearch] = useState("");
   const [infoView, setInfoView] = useState<"breakdown" | "history">("breakdown");
 
-  // 1. Fetch Salaries
+  // Fetch Salaries
   const { data: salaries = [] } = useQuery({
     queryKey: ["allSalaries"],
     queryFn: async () => await localDB.salaries.getAll()
-  });
-
-  // 2. Fetch Jobs (for delivered_by, billed_by, technician_assigned)
-  const { data: jobs = [] } = useQuery({
-    queryKey: ["allJobs"],
-    queryFn: async () => await localDB.jobs.getAll()
-  });
-
-  // 3. Fetch Payments (for amount_collected, advance_paid, split amounts)
-  const { data: payments = [] } = useQuery({
-    queryKey: ["allPayments"],
-    queryFn: async () => await localDB.payments.getAll()
   });
 
   const { register, handleSubmit, reset, watch } = useForm<SalaryFormValues>({
@@ -243,135 +229,6 @@ export default function Salary() {
     }).sort((a: any, b: any) => new Date(b.date || b.created_at).getTime() - new Date(a.date || a.created_at).getTime());
   }, [monthSalaries, searchTerm]);
 
-  // Total Amount Collected by Staff in Month
-  const staffCollectionsData = useMemo(() => {
-    let grandTotalCollected = 0;
-    let grandCashCollected = 0;
-    let grandGPayCollected = 0;
-    let totalJobsCount = 0;
-
-    const staffMap: Record<string, {
-      staffName: string;
-      totalCollected: number;
-      cashCollected: number;
-      gpayCollected: number;
-      jobsCount: number;
-      advanceCollected: number;
-      deliveryCollected: number;
-    }> = {};
-
-    payments.forEach((p: any) => {
-      const job = jobs.find((j: any) => j.id === p.job_id);
-      if (!job) return;
-
-      const isSplit = p.payment_method === "Split";
-      const totalSplit = (Number(p.split_cash) || 0) + (Number(p.split_gpay) || 0);
-      const delAmt = Number(p.amount_collected) > 0 
-        ? Number(p.amount_collected) 
-        : (isSplit && totalSplit > 0 ? totalSplit : 0);
-      const advAmt = Number(p.advance_paid) || 0;
-
-      // 1. Delivery Collection (attributed to delivered_by)
-      if (delAmt > 0) {
-        const dDate = p.payment_date || (job.created_at ? job.created_at.split("T")[0] : todayStr);
-        const matchesMonth = selectedMonth === "ALL" || dDate.startsWith(selectedMonth);
-
-        if (matchesMonth) {
-          const staff = job.delivered_by || job.technician_assigned || "Unassigned";
-          if (!staffMap[staff]) {
-            staffMap[staff] = {
-              staffName: staff,
-              totalCollected: 0,
-              cashCollected: 0,
-              gpayCollected: 0,
-              jobsCount: 0,
-              advanceCollected: 0,
-              deliveryCollected: 0
-            };
-          }
-
-          staffMap[staff].totalCollected += delAmt;
-          staffMap[staff].deliveryCollected += delAmt;
-          staffMap[staff].jobsCount += 1;
-          grandTotalCollected += delAmt;
-          totalJobsCount += 1;
-
-          if (p.payment_method === "Cash") {
-            staffMap[staff].cashCollected += delAmt;
-            grandCashCollected += delAmt;
-          } else if (p.payment_method === "GPay") {
-            staffMap[staff].gpayCollected += delAmt;
-            grandGPayCollected += delAmt;
-          } else if (isSplit) {
-            const sc = Number(p.split_cash) || 0;
-            const sg = Number(p.split_gpay) || 0;
-            staffMap[staff].cashCollected += sc;
-            staffMap[staff].gpayCollected += sg;
-            grandCashCollected += sc;
-            grandGPayCollected += sg;
-          } else {
-            staffMap[staff].cashCollected += delAmt;
-            grandCashCollected += delAmt;
-          }
-        }
-      }
-
-      // 2. Advance Collection (attributed to billed_by)
-      if (advAmt > 0) {
-        const aDate = job.created_at ? job.created_at.split("T")[0] : todayStr;
-        const matchesMonth = selectedMonth === "ALL" || aDate.startsWith(selectedMonth);
-
-        if (matchesMonth) {
-          const staff = job.billed_by || job.technician_assigned || "Unassigned";
-          if (!staffMap[staff]) {
-            staffMap[staff] = {
-              staffName: staff,
-              totalCollected: 0,
-              cashCollected: 0,
-              gpayCollected: 0,
-              jobsCount: 0,
-              advanceCollected: 0,
-              deliveryCollected: 0
-            };
-          }
-
-          staffMap[staff].totalCollected += advAmt;
-          staffMap[staff].advanceCollected += advAmt;
-          grandTotalCollected += advAmt;
-
-          if (p.payment_method === "GPay") {
-            staffMap[staff].gpayCollected += advAmt;
-            grandGPayCollected += advAmt;
-          } else {
-            staffMap[staff].cashCollected += advAmt;
-            grandCashCollected += advAmt;
-          }
-        }
-      }
-    });
-
-    const staffList = Object.values(staffMap).map((st) => ({
-      ...st,
-      percent: grandTotalCollected > 0 ? Math.round((st.totalCollected / grandTotalCollected) * 100) : 0,
-      salaryPaid: monthlyMetrics.staffSummaryList.find(s => s.name.toLowerCase() === st.staffName.toLowerCase())?.total || 0
-    })).sort((a, b) => b.totalCollected - a.totalCollected);
-
-    return {
-      grandTotalCollected,
-      grandCashCollected,
-      grandGPayCollected,
-      totalJobsCount,
-      staffList
-    };
-  }, [jobs, payments, selectedMonth, todayStr, monthlyMetrics.staffSummaryList]);
-
-  // Filtered staff collections
-  const filteredStaffCollections = useMemo(() => {
-    if (!collectionsSearch.trim()) return staffCollectionsData.staffList;
-    const q = collectionsSearch.toLowerCase();
-    return staffCollectionsData.staffList.filter(st => st.staffName.toLowerCase().includes(q));
-  }, [staffCollectionsData.staffList, collectionsSearch]);
-
   const monthLabel = useMemo(() => {
     if (selectedMonth === "ALL") return "All Time";
     const [y, m] = selectedMonth.split("-").map(Number);
@@ -384,9 +241,14 @@ export default function Salary() {
       {/* Page Title */}
       <div className="flex items-center gap-2 border-b border-border/80 pb-4">
         <span className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
-        <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
-          Staff Salary Management & Monthly Collections
-        </h1>
+        <div>
+          <h1 className="text-xl font-black uppercase tracking-tight text-foreground">
+            Staff Salary & Payroll Management
+          </h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Disburse staff wages and monitor monthly payroll reports.
+          </p>
+        </div>
       </div>
 
       {/* Row 1: Two-Card Layout for Salary Inputs & Disbursements */}
@@ -806,164 +668,6 @@ export default function Salary() {
           </CardContent>
         </Card>
       </div>
-
-      {/* =================================================================== */}
-      {/* CARD 3: TOTAL AMOUNT COLLECTED BY THE STAFF IN A MONTH */}
-      {/* =================================================================== */}
-      <Card className="cockpit-card rounded-2xl overflow-hidden shadow-lg border-border/70 animate-fadeIn">
-        <CardHeader className="p-4 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-            <div>
-              <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
-                Total Amount Collected by Staff — {monthLabel}
-              </CardTitle>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Total bill and delivery collections accumulated by each staff member across completed jobs.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <div className="relative w-full sm:w-56">
-              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                placeholder="Search technician..."
-                value={collectionsSearch}
-                onChange={(e) => setCollectionsSearch(e.target.value)}
-                className="pl-8 h-8 text-xs rounded-xl bg-background"
-              />
-            </div>
-          </div>
-        </CardHeader>
-
-        <CardContent className="p-4 space-y-4">
-          {/* Summary Strip for Collections */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-xl bg-muted/40 border border-border/60">
-            <div className="space-y-0.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                Total Staff Collections
-              </span>
-              <div className="text-base sm:text-lg font-black font-mono text-emerald-600 dark:text-emerald-400">
-                {formatCurrency(staffCollectionsData.grandTotalCollected)}
-              </div>
-            </div>
-
-            <div className="space-y-0.5 border-l border-border/60 pl-2.5">
-              <div className="flex items-center gap-1">
-                <Wallet className="w-3 h-3 text-emerald-500" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
-                  Cash Collected
-                </span>
-              </div>
-              <div className="text-base sm:text-lg font-black font-mono text-foreground">
-                {formatCurrency(staffCollectionsData.grandCashCollected)}
-              </div>
-            </div>
-
-            <div className="space-y-0.5 border-l border-border/60 pl-2.5">
-              <div className="flex items-center gap-1">
-                <Smartphone className="w-3 h-3 text-blue-500" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600">
-                  GPay / UPI Collected
-                </span>
-              </div>
-              <div className="text-base sm:text-lg font-black font-mono text-foreground">
-                {formatCurrency(staffCollectionsData.grandGPayCollected)}
-              </div>
-            </div>
-
-            <div className="space-y-0.5 border-l border-border/60 pl-2.5">
-              <div className="flex items-center gap-1">
-                <BarChart3 className="w-3 h-3 text-primary" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Tickets Handled
-                </span>
-              </div>
-              <div className="text-base sm:text-lg font-black font-mono text-foreground">
-                {staffCollectionsData.totalJobsCount} <span className="text-xs font-normal text-muted-foreground">jobs</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Detailed Staff Collection Table */}
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-b border-border/60 hover:bg-transparent text-[11px] font-bold uppercase text-muted-foreground bg-muted/10">
-                  <TableHead className="w-10">#</TableHead>
-                  <TableHead>Staff Member</TableHead>
-                  <TableHead className="text-center">Tickets Handled</TableHead>
-                  <TableHead className="text-right">Cash Collected</TableHead>
-                  <TableHead className="text-right">GPay / Online</TableHead>
-                  <TableHead className="text-right">Total Collected</TableHead>
-                  <TableHead className="w-28 text-center">Collection Share</TableHead>
-                  <TableHead className="text-right">Net Value (Coll - Salary)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredStaffCollections.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center py-10 text-muted-foreground text-xs">
-                      No revenue collections recorded by staff for {monthLabel}.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredStaffCollections.map((st, idx) => (
-                    <TableRow key={st.staffName} className="border-b border-border/40 hover:bg-muted/30 text-xs">
-                      <TableCell className="font-mono text-muted-foreground">{idx + 1}</TableCell>
-                      <TableCell>
-                        <span className="font-bold text-foreground">{st.staffName}</span>
-                        <span className="text-[10px] text-muted-foreground block">Technician</span>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant="outline" className="font-mono text-[10px] bg-muted/30">
-                          {st.jobsCount} {st.jobsCount === 1 ? "ticket" : "tickets"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                        {st.cashCollected > 0 ? formatCurrency(st.cashCollected) : "₹0"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold text-blue-600 dark:text-blue-400">
-                        {st.gpayCollected > 0 ? formatCurrency(st.gpayCollected) : "₹0"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-black text-foreground">
-                        {formatCurrency(st.totalCollected)}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <div className="space-y-1">
-                          <span className="text-[10px] font-bold text-muted-foreground">{st.percent}%</span>
-                          <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-                            <div
-                              className="bg-emerald-500 h-full rounded-full"
-                              style={{ width: `${st.percent}%` }}
-                              title={`${st.percent}% of total collection`}
-                            />
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="space-y-0.5">
-                          <div className={`font-mono font-bold text-xs ${
-                            (st.totalCollected - st.salaryPaid) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"
-                          }`}>
-                            {(st.totalCollected - st.salaryPaid) >= 0 ? "+" : ""}{formatCurrency(st.totalCollected - st.salaryPaid)}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">
-                            Salary Paid: {formatCurrency(st.salaryPaid)}
-                          </div>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
