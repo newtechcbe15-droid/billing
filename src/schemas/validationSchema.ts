@@ -149,6 +149,7 @@ export const serviceJobSchema = z
     receivedBy: z.string().optional().or(z.literal("")),
     customerSignature: z.string().optional().or(z.literal("")), // Holds base64 compression stream
     deliveryRemarks: z.string().optional().or(z.literal("")),
+    sparePartSupplier: z.string().optional().or(z.literal("")),
 
     // ==========================================
     // 6. POST-SERVICE LIFECYCLE WARRANTY SLA

@@ -13,13 +13,16 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/toaster";
 import { Button } from "@/components/ui/button";
-import { Loader2, Wrench, BarChart3, AlertTriangle, Truck, Wallet } from "lucide-react";
+import { Loader2, Wrench, BarChart3, AlertTriangle, Truck, Wallet, Package, FileText } from "lucide-react";
 
 // Lazy-Loaded Enterprise Page Bundles for Code Splitting & Performance Optimization
 const ServiceJobForm = React.lazy(() => import("@/pages/ServiceJobForm"));
 const Reports = React.lazy(() => import("@/pages/Reports"));
 const RevenueExpenses = React.lazy(() => import("@/pages/RevenueExpenses"));
 const Delivery = React.lazy(() => import("@/pages/Delivery"));
+const Stock = React.lazy(() => import("@/pages/Stock"));
+const InvoiceList = React.lazy(() => import("@/pages/InvoiceList"));
+const Invoice = React.lazy(() => import("@/pages/Invoice"));
 
 // 1. Initialize High-Performance Query Ingestion Cache
 const queryClient = new QueryClient({
@@ -41,9 +44,9 @@ function AppLayout() {
   const currentYear = new Date().getFullYear(); // Resolves to 2026 natively
 
   return (
-    <div className="flex min-h-screen bg-mesh-gradient font-sans antialiased text-slate-900 dark:text-zinc-50">
+    <div className="flex min-h-screen bg-mesh-gradient font-sans antialiased text-slate-900 dark:text-zinc-50 print:block print:min-h-0 print:bg-white print:p-0 print:m-0">
       {/* APP SIDEBAR NAVIGATION AXIS */}
-      <aside className="w-64 border-r border-white/40 dark:border-zinc-800/40 bg-white/40 dark:bg-zinc-950/40 backdrop-blur-xl flex flex-col justify-between p-4 shrink-0 select-none shadow-sm z-10">
+      <aside className="w-64 border-r border-white/40 dark:border-zinc-800/40 bg-white/40 dark:bg-zinc-950/40 backdrop-blur-xl flex flex-col justify-between p-4 shrink-0 select-none shadow-sm z-10 print:hidden">
         <div className="space-y-6">
           <div className="px-2 py-1.5 border-b border-dashed border-slate-100 dark:border-zinc-900 flex items-center gap-2.5">
             <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xs shadow-md">N</div>
@@ -56,8 +59,10 @@ function AppLayout() {
           <nav className="space-y-1">
             <SidebarLink to="/" icon={<Wrench className="w-4 h-4" />} label="New Job / Billing" />
             <SidebarLink to="/delivery" icon={<Truck className="w-4 h-4" />} label="Delivery" />
+            <SidebarLink to="/stock" icon={<Package className="w-4 h-4" />} label="Stock" />
             <SidebarLink to="/reports" icon={<BarChart3 className="w-4 h-4" />} label="Reports" />
             <SidebarLink to="/revenue" icon={<Wallet className="w-4 h-4" />} label="Revenue & Exp." />
+            <SidebarLink to="/invoice" icon={<FileText className="w-4 h-4" />} label="Invoice" />
           </nav>
         </div>
 
@@ -73,7 +78,7 @@ function AppLayout() {
       </aside>
 
       {/* CORE VIEW LAYER SHEET CONTAINER */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto print:overflow-visible print:w-full print:h-auto print:p-0 print:m-0 print:static">
         <Suspense fallback={<GlobalLoadingSpinner message="Loading..." />}>
           <Outlet />
         </Suspense>
@@ -118,8 +123,11 @@ const systemRouterTopology = createBrowserRouter([
       { index: true, element: <ServiceJobForm /> },
       { path: "edit-job/:id", element: <ServiceJobForm /> },
       { path: "delivery", element: <Delivery /> },
+      { path: "stock", element: <Stock /> },
       { path: "reports", element: <Reports /> },
       { path: "revenue", element: <RevenueExpenses /> },
+      { path: "invoice", element: <InvoiceList /> },
+      { path: "invoice/:id", element: <Invoice /> },
     ],
   },
   {

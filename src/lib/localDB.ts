@@ -1,5 +1,7 @@
 import { supabase } from './supabase';
 
+import { localInvoiceDB } from './invoiceDB';
+
 export const generateId = () => crypto.randomUUID();
 
 // Helper to interact with Supabase
@@ -29,16 +31,21 @@ export const localDB = {
   warranties: createSupabaseHelper('warranties'),
   expenses: createSupabaseHelper('expenses'),
   salaries: createSupabaseHelper('salaries'),
+  stock: createSupabaseHelper('stock'),
+  // Local Database for Invoices only - completely independent from Supabase
+  invoices: localInvoiceDB,
   settings: {
     get: async () => {
-      const { data, error } = await supabase.from('settings').select('*').single();
+      const { data, error } = await supabase.from('settings').select('*').eq('id', 'global').maybeSingle();
       if (error || !data) {
-        return { next_bill_number: 1 };
+        return { id: 'global', next_bill_number: 1, next_invoice_number: 1 };
       }
       return data;
     },
     save: async (data: any) => {
-      const { error } = await supabase.from('settings').upsert({ id: 'global', ...data });
+      // Ensure id is always 'global' and don't spread potentially conflicting read-only fields if unnecessary
+      const payload = { ...data, id: 'global' };
+      const { error } = await supabase.from('settings').upsert(payload);
       if (error) {
         console.error('Error saving settings:', error);
         throw error;

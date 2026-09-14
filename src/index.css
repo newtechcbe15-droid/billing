@@ -28,7 +28,7 @@
     --accent-foreground: oklch(0.205 0 0);
 
     /* Semantic Diagnostic Notifications */
-    --destructive: oklch(0.577 0.245 27.325);
+    --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
     /* Borders, Inputs, and Focus Indicators */
@@ -75,7 +75,7 @@
     --accent-foreground: oklch(0.985 0 0);
 
     /* Semantic Diagnostic Notifications */
-    --destructive: oklch(0.704 0.191 22.216);
+    --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
 
     /* Borders, Inputs, and Focus Indicators */
@@ -192,4 +192,10 @@
 
 .glass-panel {
   @apply bg-white/50 dark:bg-zinc-950/50 backdrop-blur-2xl border border-white/30 dark:border-zinc-800/40;
+}
+@media print {
+  body * { visibility: hidden; }
+  .print-bill-container, .print-bill-container * { visibility: visible; }
+  .print-bill-container { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none !important; border: none !important; }
+  .print-hidden, .print-hidden * { display: none !important; }
 }

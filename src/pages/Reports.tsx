@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { 
   FileSpreadsheet, 
   TrendingUp, 
@@ -14,13 +15,15 @@ import {
   Layers,
   Eye,
   FileText,
+  Search,
   Phone,
   User,
   MonitorSmartphone,
   Truck,
   Lock,
   BadgeCheck,
-  Receipt
+  Receipt,
+  Printer
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -119,10 +122,15 @@ export default function Reports() {
   const [timeframe, setTimeframe] = useState<"all" | "today" | "month" | "year">("all");
   const [deviceFilter, setDeviceFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [globalSearch, setGlobalSearch] = useState<string>("");
   
   // View Modal State
   const [selectedJob, setSelectedJob] = useState<any | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Print Modal State
+  const [printJob, setPrintJob] = useState<any | null>(null);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
   // 1. Master Pipeline Query Ledger Fetch Execution
   const { data: reportsData = [], isLoading, error } = useQuery({
@@ -174,6 +182,11 @@ export default function Reports() {
     setIsModalOpen(true);
   };
 
+  const handleOpenPrint = (job: any) => {
+    setPrintJob(job);
+    setIsPrintModalOpen(true);
+  };
+
   // 2. High-Performance Multi-Pass Filter Calculation Matrix via useMemo
   const processedRecords = useMemo(() => {
     let dataset = [...reportsData];
@@ -203,8 +216,21 @@ export default function Reports() {
       dataset = dataset.filter(r => r.status === statusFilter);
     }
 
+    // Pass D: Free Text Global Search
+    if (globalSearch.trim()) {
+      const searchTarget = globalSearch.toLowerCase().trim();
+      dataset = dataset.filter(r => 
+        r.bill_number.toLowerCase().includes(searchTarget) ||
+        (r.customers?.name || "").toLowerCase().includes(searchTarget) ||
+        (r.customers?.mobile_number || "").toLowerCase().includes(searchTarget) ||
+        r.brand.toLowerCase().includes(searchTarget) ||
+        r.model.toLowerCase().includes(searchTarget) ||
+        ((r as any).imei_serial_number || "").toLowerCase().includes(searchTarget)
+      );
+    }
+
     return dataset;
-  }, [reportsData, timeframe, deviceFilter, statusFilter]);
+  }, [reportsData, timeframe, deviceFilter, statusFilter, globalSearch]);
 
   // 3. Dynamic Accounting Ledger Summaries Calculator Component Loop
   const financialSummary = useMemo(() => {
@@ -380,6 +406,18 @@ export default function Reports() {
         </div>
       </div>
 
+      <div className="bg-white dark:bg-zinc-900 p-4 rounded-xl border border-border shadow-sm">
+        <div className="relative">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground/60" />
+          <Input
+            placeholder="Search reports by bill, customer, device..."
+            value={globalSearch}
+            onChange={(e) => setGlobalSearch(e.target.value)}
+            className="pl-9 w-full bg-background/50 border-border shadow-none"
+          />
+        </div>
+      </div>
+
       {/* ACCOUNTING SUMMARY METRIC FLASH GRID DISPLAY BLOCK */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <Card className="shadow-none border-border">
@@ -486,6 +524,15 @@ export default function Reports() {
                         title="Process Delivery"
                       >
                         <Truck className="w-3.5 h-3.5 stroke-[2.2]" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleOpenPrint(row)}
+                        className="text-xs text-amber-600 hover:text-amber-700 font-semibold gap-1 h-8 px-2 rounded-md"
+                        title="Reprint Bill"
+                      >
+                        <Printer className="w-3.5 h-3.5 stroke-[2.2]" />
                       </Button>
                       <Button
                         size="sm"
@@ -631,6 +678,85 @@ export default function Reports() {
             </Button>
             <Button onClick={() => { setIsModalOpen(false); navigate(`/edit-job/${selectedJob?.id}`); }} className="text-xs h-9 font-bold bg-blue-600 hover:bg-blue-700 text-white px-6">
               Edit Job Details
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* REPRINT SERVICE JOB BILL POPUP MODAL */}
+      <Dialog open={isPrintModalOpen} onOpenChange={setIsPrintModalOpen}>
+        {isPrintModalOpen && (
+          <style>
+            {`
+              @media print {
+                @page { size: 10cm 15cm; margin: 0; }
+                body { margin: 0; padding: 0; background: #fff; }
+                #root { display: none !important; }
+                .print-bill-container { 
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  transform: none !important;
+                  width: 10cm !important; 
+                  height: 15cm !important; 
+                  padding: 8mm !important; 
+                  margin: 0 !important; 
+                  overflow: hidden;
+                  box-sizing: border-box;
+                }
+              }
+            `}
+          </style>
+        )}
+        <DialogContent className="sm:max-w-[400px] print-bill-container bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black uppercase text-center border-b pb-3 mb-2 print-hidden">Reprint Service Job Receipt</DialogTitle>
+          </DialogHeader>
+          
+          {printJob && (
+            <div className="space-y-4 text-sm print-section">
+              <div className="text-center pb-2 border-b-2 border-dashed">
+                <h2 className="text-lg font-black uppercase">Service Job Bill</h2>
+                <div className="mt-2 mb-2 flex flex-col items-center justify-center">
+                  <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest font-bold">Bill No</span>
+                  <span className="text-3xl font-black font-mono text-foreground leading-none mt-0.5">{printJob.bill_number}</span>
+                </div>
+                <p className="text-xs text-muted-foreground font-mono">Date: {printJob.created_at?.split('T')[0]}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-0.5">Customer</p>
+                  <p className="font-semibold text-xs">{printJob.customers?.name || "N/A"}</p>
+                  <p className="font-mono text-[10px]">{printJob.customers?.mobile_number || "N/A"}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-0.5">Device</p>
+                  <p className="font-semibold text-xs">{printJob.brand} {printJob.model}</p>
+                </div>
+              </div>
+
+              <div className="bg-muted/30 p-2 rounded-lg border">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-0.5">Complaint / Issue</p>
+                <p className="text-[11px] font-medium leading-tight">{printJob.complaint}</p>
+              </div>
+
+              <div className="flex justify-between items-center py-2 border-y border-dashed">
+                <p className="text-[11px] font-bold uppercase tracking-wider">Estimated Amt</p>
+                <p className="text-sm font-black font-mono">₹{Number(printJob.payments?.estimated_amount || 0).toFixed(2)}</p>
+              </div>
+
+              <div className="text-[8px] leading-[1.2] text-muted-foreground pt-1 text-justify">
+                <strong>Terms & Conditions:</strong> Delivery date may be delayed incase of spare parts and software unavailability. All Estimate cost are Approximate &amp; subject to change on completion of the job. All articles taken for repairs are subject to owner’s risk. The company will do its best to complete job in time but not responsible for any foreseen already in completing job on the due date. Damage to the semi defective parts during servicing cannot be hold responsible while servicing certain equipments parts of modification in the circuit require will be done. The company is not responsible for goods not takes beyond 30 days from the date of job card. Old defective parts will not returned. Incase the job is not completed of estimation not being passed minimum service charges has Rs. 50.00 be paid. Only Checking Warranty.
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="sm:justify-between mt-6 print-hidden">
+            <Button variant="outline" onClick={() => setIsPrintModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2">
+              <Printer className="w-4 h-4" /> Print Bill
             </Button>
           </DialogFooter>
         </DialogContent>

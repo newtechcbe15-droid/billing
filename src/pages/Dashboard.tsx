@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { localDB } from "@/lib/localDB";
 import { StatCards } from "@/components/dashboard/StatCards";
@@ -6,7 +7,8 @@ import { RecentJobsTable } from "@/components/dashboard/RecentJobsTable";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ShieldAlert, CalendarClock } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Loader2, ShieldAlert, CalendarClock, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 export default function Dashboard() {
@@ -113,6 +115,18 @@ export default function Dashboard() {
   // Generate blank loading shell interfaces while pipeline processes row counts
   const skeletonView = isLoading || !dashboardPayload;
 
+  const [warrantySearch, setWarrantySearch] = useState("");
+  const filteredWarranties = dashboardPayload?.expiringWarrantiesFeed.filter((job: any) => {
+    const search = warrantySearch.toLowerCase().trim();
+    if (!search) return true;
+    return (
+      job.bill_number?.toLowerCase().includes(search) ||
+      job.brand?.toLowerCase().includes(search) ||
+      job.model?.toLowerCase().includes(search) ||
+      ((job.customers as any)?.name || (job.customers as any)?.[0]?.name || "").toLowerCase().includes(search)
+    );
+  }) || [];
+
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto dark:bg-zinc-950 min-h-screen text-slate-900 dark:text-zinc-50">
       
@@ -168,19 +182,28 @@ export default function Dashboard() {
             Warranties Expiring Soon
           </h3>
           <Card className="shadow-sm border-border bg-card overflow-hidden">
-            <CardHeader className="p-4 border-b">
+            <CardHeader className="p-4 border-b space-y-3">
               <CardDescription className="text-[10px] leading-tight">
                 Warranties expiring within the next 7 days.
               </CardDescription>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground/60" />
+                <Input
+                  placeholder="Search warranties..."
+                  value={warrantySearch}
+                  onChange={(e) => setWarrantySearch(e.target.value)}
+                  className="pl-8 h-8 text-xs bg-background/50 border-border shadow-none"
+                />
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {skeletonView ? (
                 <div className="p-6 space-y-3">
                   {Array.from({ length: 3 }).map((_, idx) => <div key={idx} className="h-10 bg-muted/60 animate-pulse rounded" />)}
                 </div>
-              ) : dashboardPayload.expiringWarrantiesFeed.length === 0 ? (
+              ) : filteredWarranties.length === 0 ? (
                 <div className="p-8 text-center text-xs text-muted-foreground font-medium opacity-50">
-                  No warranties expiring in the next 7 days.
+                  No warranties found.
                 </div>
               ) : (
                 <Table>
@@ -192,7 +215,7 @@ export default function Dashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {dashboardPayload.expiringWarrantiesFeed.map((job: any) => (
+                    {filteredWarranties.map((job: any) => (
                       <TableRow key={job.id} className="border-b border-border/40 hover:bg-transparent text-[11px]">
                         <TableCell className="p-3 font-mono font-bold">{job.bill_number}</TableCell>
                         <TableCell className="p-3">

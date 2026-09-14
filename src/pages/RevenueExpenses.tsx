@@ -17,10 +17,12 @@ import {
   Trash2,
   Calendar,
   IndianRupee,
-  Users
+  Users,
+  Search
 } from "lucide-react";
 
 interface ExpenseFormValues {
+  type: "Expense" | "Revenue";
   description: string;
   amount: number;
   paymentMethod: "Cash" | "GPay" | "Bank Transfer" | "Other";
@@ -70,10 +72,15 @@ export default function RevenueExpenses() {
   });
 
   const todayStr = new Date().toISOString().split("T")[0];
+  const currentMonthStr = todayStr.substring(0, 7);
   const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [ledgerSearch, setLedgerSearch] = useState("");
+  const [salarySearch, setSalarySearch] = useState("");
+  const [salaryMonth, setSalaryMonth] = useState(currentMonthStr);
 
-  const { register, handleSubmit, reset } = useForm<ExpenseFormValues>({
+  const { register, handleSubmit, reset, watch, setValue } = useForm<ExpenseFormValues>({
     defaultValues: {
+      type: "Expense",
       description: "",
       amount: 0,
       paymentMethod: "Cash",
@@ -95,6 +102,7 @@ export default function RevenueExpenses() {
       const expList = await localDB.expenses.getAll();
       const newExp = {
         id: generateId(),
+        type: values.type,
         description: values.description,
         amount: Number(values.amount),
         payment_method: values.paymentMethod,
@@ -107,8 +115,8 @@ export default function RevenueExpenses() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allExpenses"] });
-      toast({ title: "Expense Added", description: "The expense has been successfully recorded." });
-      reset({ description: "", amount: 0, paymentMethod: "Cash", date: todayStr });
+      toast({ title: "Log Added", description: "The log has been successfully recorded." });
+      reset({ type: "Expense", description: "", amount: 0, paymentMethod: "Cash", date: todayStr });
     }
   });
 
@@ -170,10 +178,11 @@ export default function RevenueExpenses() {
   const { ledger, openingBalance } = useMemo(() => {
     const allRows: LedgerRow[] = [];
 
-    // 1. Add Expenses
+    // 1. Add Expenses / Revenues (Logs)
     expenses.forEach((e: any) => {
-      const in_amt = 0;
-      const out_amt = Number(e.amount) || 0;
+      const is_revenue = e.type === "Revenue";
+      const in_amt = is_revenue ? (Number(e.amount) || 0) : 0;
+      const out_amt = is_revenue ? 0 : (Number(e.amount) || 0);
       allRows.push({
         id: e.id,
         date: e.date,
@@ -181,17 +190,45 @@ export default function RevenueExpenses() {
         summary: `${e.description} (${e.payment_method})`,
         in_amt,
         out_amt,
-        is_expense: true,
+        is_expense: !is_revenue,
         timestamp: new Date(e.created_at || e.date).getTime()
       });
     });
 
-    // 2. Add Deliveries (Payments collected on delivery)
+    // 2. Add Deliveries (Payments collected on delivery) and Advances
     payments.forEach((p: any) => {
-      if (p.payment_date) {
-        const job = jobs.find((j: any) => j.id === p.job_id);
-        const bill_no = job ? job.bill_number : "-";
+      const job = jobs.find((j: any) => j.id === p.job_id);
+      const bill_no = job ? job.bill_number : "-";
+
+      // 2a. Add Advance Payment if collected
+      if (p.advance_paid && Number(p.advance_paid) > 0) {
+        const advDate = job && job.created_at ? job.created_at.split("T")[0] : "-";
         
+        let in_amt = Number(p.advance_paid);
+        let out_amt = 0;
+        
+        if (p.payment_method === "GPay") {
+          out_amt = in_amt;
+        } else if (p.payment_method === "Split") {
+          // If split, usually the advance isn't split (it's usually paid upfront via one method), 
+          // but we can default to 0 out_amt for advance unless specifically known.
+          out_amt = 0;
+        }
+
+        allRows.push({
+          id: `adv-${p.job_id}`,
+          date: advDate,
+          bill_no,
+          summary: `Advance Collected (${p.payment_method || "Cash"})`,
+          in_amt,
+          out_amt,
+          is_expense: false,
+          timestamp: new Date(job?.created_at || new Date().toISOString()).getTime()
+        });
+      }
+
+      // 2b. Add Payment Collected on Delivery
+      if (p.payment_date) {
         const in_amt = Number(p.amount_collected) || 0;
         let out_amt = 0;
         
@@ -327,7 +364,7 @@ export default function RevenueExpenses() {
           <Card className="shadow-sm border-border sticky top-6">
             <CardHeader className="border-b bg-muted/20 pb-4">
               <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                <PlusCircle className="w-4 h-4 text-rose-500" /> Log New Expense
+                <PlusCircle className="w-4 h-4 text-rose-500" /> New Log
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6">
@@ -335,6 +372,27 @@ export default function RevenueExpenses() {
                 <div>
                   <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Date (Automated)</label>
                   <Input type="date" {...register("date")} disabled className="h-9 font-medium bg-muted" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Type</label>
+                  <div className="flex gap-2">
+                    <Button 
+                      type="button" 
+                      variant={watch("type") === "Expense" ? "default" : "outline"} 
+                      onClick={() => setValue("type", "Expense")} 
+                      className={`flex-1 h-9 text-xs font-bold ${watch("type") === "Expense" ? "bg-rose-600 hover:bg-rose-700 text-white" : ""}`}
+                    >
+                      Expense
+                    </Button>
+                    <Button 
+                      type="button" 
+                      variant={watch("type") === "Revenue" ? "default" : "outline"} 
+                      onClick={() => setValue("type", "Revenue")} 
+                      className={`flex-1 h-9 text-xs font-bold ${watch("type") === "Revenue" ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                    >
+                      Revenue
+                    </Button>
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs font-bold text-muted-foreground mb-1.5 block uppercase tracking-wider">Description</label>
@@ -353,8 +411,8 @@ export default function RevenueExpenses() {
                     <option value="Other">Other</option>
                   </select>
                 </div>
-                <Button type="submit" disabled={addExpenseMutation.isPending} className="w-full h-10 font-bold bg-rose-600 hover:bg-rose-700 text-white mt-2">
-                  Add Expense
+                <Button type="submit" disabled={addExpenseMutation.isPending} className="w-full h-10 font-bold bg-slate-900 hover:bg-slate-800 text-white mt-2">
+                  Add Log
                 </Button>
               </form>
             </CardContent>
@@ -428,6 +486,15 @@ export default function RevenueExpenses() {
                   onChange={(e) => setSelectedDate(e.target.value)} 
                   className="h-8 font-medium w-auto" 
                 />
+                <div className="relative ml-2">
+                  <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground/60" />
+                  <Input 
+                    placeholder="Search ledger..." 
+                    value={ledgerSearch}
+                    onChange={(e) => setLedgerSearch(e.target.value)}
+                    className="pl-8 h-8 font-medium w-32 sm:w-48 text-xs bg-background/50 border-border"
+                  />
+                </div>
               </div>
             </div>
             <Table>
@@ -443,8 +510,7 @@ export default function RevenueExpenses() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {/* OPENING BALANCE ROW */}
-                {selectedDate !== "ALL" && (
+                {selectedDate !== "ALL" && !ledgerSearch.trim() && (
                   <TableRow className="bg-blue-50/30 dark:bg-blue-900/10">
                     <TableCell className="font-mono text-xs text-muted-foreground">-</TableCell>
                     <TableCell className="font-mono text-xs text-blue-600 font-bold">{selectedDate}</TableCell>
@@ -460,14 +526,28 @@ export default function RevenueExpenses() {
                   </TableRow>
                 )}
 
-                {ledger.length === 0 ? (
+                {ledger.filter(row => {
+                  const search = ledgerSearch.toLowerCase().trim();
+                  if (!search) return true;
+                  return (
+                    row.bill_no.toLowerCase().includes(search) ||
+                    row.summary.toLowerCase().includes(search)
+                  );
+                }).length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="h-32 text-center text-xs font-medium text-muted-foreground opacity-50">
-                      No records found{selectedDate !== "ALL" ? ` for ${selectedDate}` : ""}.
+                      No records found.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  ledger.map((row, idx) => (
+                  ledger.filter(row => {
+                    const search = ledgerSearch.toLowerCase().trim();
+                    if (!search) return true;
+                    return (
+                      row.bill_no.toLowerCase().includes(search) ||
+                      row.summary.toLowerCase().includes(search)
+                    );
+                  }).map((row, idx) => (
                     <TableRow key={row.id} className="hover:bg-muted/10 transition-colors">
                       <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
                       <TableCell className="font-mono text-xs">{row.date}</TableCell>
@@ -513,6 +593,32 @@ export default function RevenueExpenses() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
                 <Users className="w-4 h-4 text-zinc-500" /> Staff Salaries List
               </h3>
+              <div className="flex flex-wrap items-center gap-2 sm:ml-auto w-full sm:w-auto">
+                <Button 
+                  variant={salaryMonth === "ALL" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSalaryMonth("ALL")}
+                  className="h-8 text-xs font-bold"
+                >
+                  All Months
+                </Button>
+                <div className="h-4 w-px bg-border mx-1"></div>
+                <Input 
+                  type="month"
+                  value={salaryMonth !== "ALL" ? salaryMonth : currentMonthStr}
+                  onChange={(e) => setSalaryMonth(e.target.value)}
+                  className="h-8 font-medium w-auto text-xs bg-background/50"
+                />
+                <div className="relative flex-1 sm:flex-none">
+                  <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground/60" />
+                  <Input 
+                    placeholder="Search staff..." 
+                    value={salarySearch}
+                    onChange={(e) => setSalarySearch(e.target.value)}
+                    className="pl-8 h-8 font-medium w-full sm:w-40 text-xs bg-background/50 border-border"
+                  />
+                </div>
+              </div>
             </div>
             <Table>
               <TableHeader className="bg-muted/40">
@@ -526,14 +632,30 @@ export default function RevenueExpenses() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {salaries.length === 0 ? (
+                {salaries.filter((row: any) => {
+                  if (salaryMonth !== "ALL" && !row.date?.startsWith(salaryMonth)) return false;
+                  const search = salarySearch.toLowerCase().trim();
+                  if (!search) return true;
+                  return (
+                    row.staff_name?.toLowerCase().includes(search) ||
+                    row.payment_method?.toLowerCase().includes(search)
+                  );
+                }).length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="h-32 text-center text-xs font-medium text-muted-foreground opacity-50">
-                      No staff salaries logged yet.
+                      No staff salaries logged yet for this filter.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  salaries.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map((row: any, idx: number) => (
+                  salaries.filter((row: any) => {
+                    if (salaryMonth !== "ALL" && !row.date?.startsWith(salaryMonth)) return false;
+                    const search = salarySearch.toLowerCase().trim();
+                    if (!search) return true;
+                    return (
+                      row.staff_name?.toLowerCase().includes(search) ||
+                      row.payment_method?.toLowerCase().includes(search)
+                    );
+                  }).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map((row: any, idx: number) => (
                     <TableRow key={row.id} className="hover:bg-muted/10 transition-colors">
                       <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
                       <TableCell className="font-mono text-xs">{row.date}</TableCell>
