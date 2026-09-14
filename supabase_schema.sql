@@ -400,3 +400,25 @@ EXCEPTION
     -- Ignore if tables are already in the publication or permission is restricted
     NULL;
 END $$;
+
+-- ==============================================================================
+-- 7. UTILITY: CLEAR / TRUNCATE ALL DATA (OPTIONAL FACTORY RESET)
+-- ==============================================================================
+-- Run the snippet below if you wish to wipe all tickets, customers, inventory & ledger:
+--
+-- TRUNCATE TABLE 
+--   public.warranties, 
+--   public.payments, 
+--   public.jobs, 
+--   public.customers, 
+--   public.expenses, 
+--   public.salaries, 
+--   public.stock, 
+--   public.attendance, 
+--   public.invoices 
+-- CASCADE;
+--
+-- UPDATE public.settings 
+-- SET next_bill_number = 1, next_invoice_number = 1 
+-- WHERE id = 'global';
+
