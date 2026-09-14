@@ -1,18 +1,11 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { localDB } from "@/lib/localDB";
 import { StatCards } from "@/components/dashboard/StatCards";
-import { AnalyticsCharts } from "@/components/dashboard/AnalyticsCharts";
 import { RecentJobsTable } from "@/components/dashboard/RecentJobsTable";
-import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { 
   ShieldAlert, 
-  CalendarClock, 
-  Search, 
   Plus, 
   Truck, 
   Package, 
@@ -85,15 +78,9 @@ export default function Dashboard() {
       });
 
       const pendingDeliveryJobs = fullUnifiedJobs.filter((j: any) => j.status === "Ready" || j.status === "Completed");
-      const recentJobsFeed = fullUnifiedJobs.slice(0, 7);
-      const expiringWarrantiesFeed = fullUnifiedJobs
-        .filter((j: any) => j.warranties?.warranty_expiry_date && j.warranties.warranty_expiry_date >= todayISO && j.warranties.warranty_expiry_date <= sevenDaysAheadISO)
-        .slice(0, 5);
 
       return {
         jobsList: fullUnifiedJobs,
-        recentJobsFeed,
-        expiringWarrantiesFeed,
         metrics: {
           totalJobs: fullUnifiedJobs.length,
           todayJobs: todayJobsCount,
@@ -122,18 +109,6 @@ export default function Dashboard() {
   }
 
   const skeletonView = isLoading || !dashboardPayload;
-  const [warrantySearch, setWarrantySearch] = useState("");
-
-  const filteredWarranties = dashboardPayload?.expiringWarrantiesFeed.filter((job: any) => {
-    const search = warrantySearch.toLowerCase().trim();
-    if (!search) return true;
-    return (
-      job.bill_number?.toLowerCase().includes(search) ||
-      job.brand?.toLowerCase().includes(search) ||
-      job.model?.toLowerCase().includes(search) ||
-      ((job.customers as any)?.name || "").toLowerCase().includes(search)
-    );
-  }) || [];
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
@@ -194,109 +169,39 @@ export default function Dashboard() {
         isLoading={skeletonView} 
       />
 
-      {/* SECTION 3: CHARTS ENGINE */}
-      {!skeletonView && (
-        <div className="w-full animate-fadeIn">
-          <AnalyticsCharts rawData={dashboardPayload.jobsList as any} />
-        </div>
-      )}
-
-      {/* SECTION 4: RECENT TICKETS & WARRANTIES GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Recent Jobs Stream */}
-        <div className="lg:col-span-2 space-y-3">
-          <div className="flex items-center justify-between">
+      {/* SECTION 3: FULL JOB LIST PIPELINE */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <Wrench className="w-3.5 h-3.5 text-primary" />
-              <span>Recent Jobs Pipeline</span>
+              <span>Jobs Pipeline & Registry</span>
             </h3>
+            <p className="text-[11px] text-muted-foreground">
+              Real-time feed of all repair tickets, customer details, and payment statuses.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="font-mono text-xs font-bold bg-primary/5 text-primary border-primary/20">
+              {dashboardPayload?.jobsList.length || 0} Total Jobs
+            </Badge>
             <Button 
               variant="ghost" 
               size="sm" 
               onClick={() => navigate("/reports")} 
               className="text-xs font-semibold text-primary h-7 gap-1"
             >
-              View All <ArrowRight className="w-3 h-3" />
+              Reports & Export <ArrowRight className="w-3 h-3" />
             </Button>
-          </div>
-
-          <div className="cockpit-card rounded-2xl overflow-hidden">
-            <RecentJobsTable 
-              jobs={dashboardPayload?.recentJobsFeed as any || []} 
-              isLoading={skeletonView} 
-              onViewDetails={(id) => navigate(`/edit-job/${id}`)}
-            />
           </div>
         </div>
 
-        {/* Right Column: Expiring Warranties Card */}
-        <div className="space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 text-amber-500">
-            <CalendarClock className="w-4 h-4" />
-            <span>Warranties Expiring Soon</span>
-          </h3>
-
-          <Card className="cockpit-card rounded-2xl overflow-hidden">
-            <CardHeader className="p-4 border-b border-border/60 bg-muted/20 space-y-2">
-              <CardDescription className="text-[11px] leading-tight">
-                Customer guarantees concluding within 7 operational days.
-              </CardDescription>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground" />
-                <Input
-                  placeholder="Search expiring..."
-                  value={warrantySearch}
-                  onChange={(e) => setWarrantySearch(e.target.value)}
-                  className="pl-8 h-8 text-xs rounded-xl bg-background"
-                />
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {skeletonView ? (
-                <div className="p-4 space-y-2">
-                  {Array.from({ length: 3 }).map((_, idx) => (
-                    <div key={idx} className="h-10 bg-muted/60 animate-pulse rounded-xl" />
-                  ))}
-                </div>
-              ) : filteredWarranties.length === 0 ? (
-                <div className="p-8 text-center text-xs text-muted-foreground font-medium">
-                  No expiring guarantees in the 7-day window.
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader className="bg-muted/30">
-                    <TableRow className="border-b border-border/60 hover:bg-transparent text-[11px]">
-                      <TableHead className="p-3">Ticket #</TableHead>
-                      <TableHead className="p-3">Asset</TableHead>
-                      <TableHead className="p-3 text-right">Expiry</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredWarranties.map((job: any) => (
-                      <TableRow key={job.id} className="border-b border-border/40 hover:bg-muted/30 text-xs">
-                        <TableCell className="p-3 font-mono font-bold text-foreground">
-                          #{job.bill_number}
-                        </TableCell>
-                        <TableCell className="p-3">
-                          <div className="font-semibold text-foreground truncate max-w-[120px]">
-                            {job.brand} {job.model}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">
-                            {job.customers?.name || "Client"}
-                          </div>
-                        </TableCell>
-                        <TableCell className="p-3 text-right">
-                          <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 text-[10px] font-mono font-bold rounded-md">
-                            {new Date(job.warranties?.warranty_expiry_date || "").toLocaleDateString("en-IN", { month: "short", day: "numeric" })}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+        <div className="cockpit-card rounded-2xl p-5 border border-border/60 bg-card shadow-sm">
+          <RecentJobsTable 
+            jobs={dashboardPayload?.jobsList as any || []} 
+            isLoading={skeletonView} 
+            onViewDetails={(id) => navigate(`/edit-job/${id}`)}
+          />
         </div>
       </div>
     </div>
