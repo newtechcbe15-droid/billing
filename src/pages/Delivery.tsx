@@ -197,6 +197,7 @@ export default function Delivery() {
       if (jIndex > -1) {
         jobs[jIndex].status = values.deliveryType;
         jobs[jIndex].delivered_by = values.deliveredBy;
+        jobs[jIndex].updated_at = new Date().toISOString();
         
         if (values.warrantyDuration && values.warrantyDuration !== "No Warranty") {
           const wDate = new Date();

@@ -164,11 +164,13 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
           await localDB.customers.save(customers);
         }
 
+        const now = new Date().toISOString();
         const newJob = {
           id: generateId(),
           customer_id: customer.id,
           bill_number: values.billNumber,
-          created_at: values.jobDate,
+          created_at: values.jobDate || now,
+          updated_at: now,
           device_type: values.deviceType,
           brand: values.brand,
           model: values.model,
@@ -243,6 +245,7 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
         if (jIndex > -1) {
           jobs[jIndex] = {
             ...jobs[jIndex],
+            updated_at: new Date().toISOString(),
             device_type: values.deviceType,
             brand: values.brand,
             model: values.model,
@@ -293,6 +296,7 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
         const jIndex = jobs.findIndex((j: any) => j.id === id);
         if (jIndex > -1) {
           jobs[jIndex].status = status;
+          jobs[jIndex].updated_at = new Date().toISOString();
           if (remarks) jobs[jIndex].delivery_remarks = remarks;
           await localDB.jobs.save(jobs);
         }

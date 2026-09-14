@@ -179,6 +179,7 @@ export default function Reports() {
       const index = jobs.findIndex((j: any) => j.id === id);
       if (index > -1) {
         jobs[index].status = status;
+        jobs[index].updated_at = new Date().toISOString();
         if (status === "Return" && reason !== undefined) {
           jobs[index].returnReason = reason;
         }

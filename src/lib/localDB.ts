@@ -16,14 +16,26 @@ const createSupabaseHelper = (tableName: string) => ({
   },
   save: async (items: any[]) => {
     if (!items || items.length === 0) return;
-    const { error } = await supabase.from(tableName).upsert(items);
+    const now = new Date().toISOString();
+    const sanitized = items.map((item: any) => ({
+      ...item,
+      created_at: item.created_at || now,
+      updated_at: item.updated_at || now,
+    }));
+    const { error } = await supabase.from(tableName).upsert(sanitized);
     if (error) {
       console.error(`Error saving to ${tableName}:`, error);
       throw error;
     }
   },
   insert: async (item: any) => {
-    const { data, error } = await supabase.from(tableName).insert(item).select().single();
+    const now = new Date().toISOString();
+    const payload = {
+      ...item,
+      created_at: item.created_at || now,
+      updated_at: item.updated_at || now,
+    };
+    const { data, error } = await supabase.from(tableName).insert(payload).select().single();
     if (error) {
       console.error(`Error inserting into ${tableName}:`, error);
       throw error;
@@ -31,7 +43,12 @@ const createSupabaseHelper = (tableName: string) => ({
     return data;
   },
   update: async (id: string, updates: any) => {
-    const { data, error } = await supabase.from(tableName).update(updates).eq('id', id).select().maybeSingle();
+    const now = new Date().toISOString();
+    const payload = {
+      ...updates,
+      updated_at: now,
+    };
+    const { data, error } = await supabase.from(tableName).update(payload).eq('id', id).select().maybeSingle();
     if (error) {
       console.error(`Error updating in ${tableName}:`, error);
       throw error;
