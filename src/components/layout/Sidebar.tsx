@@ -10,6 +10,7 @@ import {
   FileText,
   BarChart3,
   Wallet,
+  Users,
   LogOut,
   X,
   Laptop,
@@ -68,9 +69,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       title: "Finance & Insights",
       items: [
         {
-          name: "Daily Ledger & Payroll",
+          name: "Daily Cash Ledger",
           path: "/revenue",
           icon: Wallet
+        },
+        {
+          name: "Staff Salary & Payroll",
+          path: "/salary",
+          icon: Users,
+          badge: "Monthly Report"
         },
         {
           name: "Reports & Analytics",

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { localDB, generateId } from "@/lib/localDB";
 import { useToast } from "@/hooks/use-toast";
@@ -237,9 +238,15 @@ export default function RevenueExpenses() {
       }
 
       // 2b. Delivery Collection
-      if (Number(p.amount_collected) > 0) {
+      const isSplitDelivery = p.payment_method === "Split";
+      const totalSplit = (Number(p.split_cash) || 0) + (Number(p.split_gpay) || 0);
+      const deliveryAmt = Number(p.amount_collected) > 0 
+        ? Number(p.amount_collected) 
+        : (isSplitDelivery && totalSplit > 0 ? totalSplit : 0);
+
+      if (deliveryAmt > 0) {
         const dDate = p.payment_date || (job?.created_at ? job.created_at.split("T")[0] : todayStr);
-        const in_amt = Number(p.amount_collected);
+        const in_amt = deliveryAmt;
         let out_amt = 0;
         
         if (p.payment_method === "GPay") {
@@ -268,17 +275,27 @@ export default function RevenueExpenses() {
       }
     });
 
-    // 3. Add Salaries
+    // 3. Add Salaries (ONLY Cash from Drawer is recorded as Cash Book Outflow / Expense)
+    // Salaries paid via "GPay from MD" are direct MD bank transfers and MUST NOT enter the shop ledger!
     salaries.forEach((s: any) => {
+      const pMethod = s.payment_method || "Cash";
+      const isCash = pMethod === "Cash" || pMethod.toLowerCase().includes("cash") || pMethod.toLowerCase().includes("drawer");
+      const isMDTransfer = pMethod.toLowerCase().includes("md") || (!isCash && pMethod.toLowerCase().includes("gpay"));
+
+      // Only cash from drawer deducts from shop cash book
+      if (!isCash || isMDTransfer) {
+        return;
+      }
+
       allRows.push({
         id: s.id,
         date: s.date,
         bill_no: "Payroll",
-        summary: `Salary: ${s.staff_name} (${s.payment_method})`,
+        summary: `Salary: ${s.staff_name} (Cash Drawer)`,
         in_amt: 0,
         out_amt: Number(s.amount) || 0,
         is_expense: true,
-        payment_method: s.payment_method,
+        payment_method: "Cash",
         timestamp: new Date(s.created_at || s.date).getTime()
       });
     });
@@ -527,8 +544,19 @@ export default function RevenueExpenses() {
           }`}
         >
           <Users className="w-3.5 h-3.5" />
-          Staff Payroll Registry
+          Staff Payroll
         </button>
+
+        <Link to="/salary" className="ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs font-bold rounded-xl flex items-center gap-1.5 border-primary/40 text-primary hover:bg-primary/10"
+          >
+            <Users className="w-3.5 h-3.5" />
+            Full Monthly Report & Management →
+          </Button>
+        </Link>
       </div>
 
       {/* TAB 1: DAILY CASH BOOK LEDGER */}
@@ -823,14 +851,13 @@ export default function RevenueExpenses() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold block mb-1">Payment Method</label>
+                  <label className="text-xs font-semibold block mb-1">Payment Source & Ledger Impact</label>
                   <select 
                     {...registerSalary("paymentMethod")} 
                     className="w-full border border-input rounded-xl px-3 bg-background text-xs font-bold h-10 outline-none"
                   >
-                    <option value="Cash">Cash</option>
-                    <option value="GPay">GPay / UPI</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Cash">Cash (Shop Drawer - Enters Daily Ledger)</option>
+                    <option value="GPay from MD">GPay from MD (Direct from MD - Non-Ledger)</option>
                   </select>
                 </div>
 

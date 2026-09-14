@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { localDB } from "@/lib/localDB";
+import { localDB, generateId } from "@/lib/localDB";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { useSearchParams } from "react-router-dom";
@@ -96,20 +96,52 @@ export default function Delivery() {
     }
   });
 
-  // Re-hydrate form when job loads
+  // Re-hydrate form when job loads, pre-filling remaining balance
   React.useEffect(() => {
     if (job) {
+      const estAmt = Number(job.payments?.estimated_amount) || 0;
+      const advPaid = Number(job.payments?.advance_paid) || 0;
+      const disc = Number(job.payments?.discount) || 0;
+      const taxPct = Number(job.payments?.tax_percentage) || 0;
+      const subtotal = estAmt - disc;
+      const tax = subtotal * (taxPct / 100);
+      const netTotal = subtotal + tax;
+      const remainingBalance = Math.max(0, netTotal - advPaid);
+
+      const existingCollected = Number(job.payments?.amount_collected) || 0;
+      const existingSplitCash = Number(job.payments?.split_cash) || 0;
+      const existingSplitGPay = Number(job.payments?.split_gpay) || 0;
+      const hasSplitAmounts = existingSplitCash > 0 || existingSplitGPay > 0;
+      
+      const initialCollected = existingCollected > 0 
+        ? existingCollected 
+        : (hasSplitAmounts ? (existingSplitCash + existingSplitGPay) : remainingBalance);
+
       reset({
-        amountCollected: job.payments?.amount_collected || 0,
+        amountCollected: initialCollected,
         deliveredBy: job.delivered_by || "Suresh",
         deliveryType: job.status === "Delivered Return" ? "Delivered Return" : "Delivered",
         paymentMethod: (job.payments?.payment_method as any) || "Cash",
-        splitCashAmount: job.payments?.split_cash || 0,
-        splitGPayAmount: job.payments?.split_gpay || 0,
+        splitCashAmount: existingSplitCash,
+        splitGPayAmount: existingSplitGPay,
         warrantyDuration: job.warranties?.warranty_duration || "No Warranty"
       });
     }
   }, [job, reset]);
+
+  const splitCash = watch("splitCashAmount");
+  const splitGPay = watch("splitGPayAmount");
+  const payMeth = watch("paymentMethod");
+
+  // Keep amountCollected in sync with Split components
+  React.useEffect(() => {
+    if (payMeth === "Split") {
+      const totalSplit = (Number(splitCash) || 0) + (Number(splitGPay) || 0);
+      if (totalSplit > 0) {
+        setValue("amountCollected", totalSplit);
+      }
+    }
+  }, [splitCash, splitGPay, payMeth, setValue]);
 
   const handleSearch = React.useCallback(async () => {
     if (!searchBill.trim()) return;
@@ -131,6 +163,24 @@ export default function Delivery() {
     }
   }, [searchParams, handleSearch]);
 
+  const estAmt = job?.payments?.estimated_amount || 0;
+  const advPaid = job?.payments?.advance_paid || 0;
+  const amtColl = watch("amountCollected") || 0;
+  const disc = job?.payments?.discount || 0;
+  const taxPct = job?.payments?.tax_percentage || 0;
+
+  const calculatedBalance = React.useMemo(() => {
+    const subtotal = estAmt - disc;
+    const tax = subtotal * (taxPct / 100);
+    const netTotal = subtotal + tax;
+    const receipts = Number(advPaid) + Number(amtColl);
+    return {
+      netTotal,
+      balance: Math.max(0, netTotal - receipts),
+      status: receipts >= netTotal ? "Paid" : receipts > 0 ? "Partially Paid" : "Unpaid"
+    };
+  }, [estAmt, advPaid, amtColl, disc, taxPct]);
+
   const deliveryMutation = useMutation({
     mutationFn: async (values: DeliveryFormValues) => {
       if (!job) throw new Error("No active job");
@@ -138,7 +188,9 @@ export default function Delivery() {
       const jobs = await localDB.jobs.getAll();
       const payments = await localDB.payments.getAll();
       const warranties = await localDB.warranties.getAll();
+      const today = new Date().toISOString().split("T")[0];
       
+      // 1. Update Job Status
       const jIndex = jobs.findIndex((j: any) => j.id === job.id);
       if (jIndex > -1) {
         jobs[jIndex].status = values.deliveryType;
@@ -153,7 +205,7 @@ export default function Delivery() {
           
           const wIndex = warranties.findIndex((w: any) => w.job_id === job.id);
           const newWarranty = {
-            id: wIndex > -1 ? warranties[wIndex].id : crypto.randomUUID(),
+            id: wIndex > -1 ? warranties[wIndex].id : generateId(),
             job_id: job.id,
             warranty_duration: values.warrantyDuration,
             warranty_expiry_date: wDate.toISOString().split("T")[0],
@@ -171,16 +223,51 @@ export default function Delivery() {
         await localDB.jobs.save(jobs);
       }
       
+      // 2. Determine Collected Payment & Method Breakdown
+      const isSplit = values.paymentMethod === "Split";
+      const totalSplit = (Number(values.splitCashAmount) || 0) + (Number(values.splitGPayAmount) || 0);
+      const collectedAmt = isSplit 
+        ? (totalSplit > 0 ? totalSplit : Number(values.amountCollected || 0))
+        : Number(values.amountCollected || 0);
+
       const pIndex = payments.findIndex((p: any) => p.job_id === job.id);
+      const paymentPayload = {
+        amount_collected: collectedAmt,
+        payment_method: values.paymentMethod,
+        payment_date: today,
+        split_cash: isSplit ? Number(values.splitCashAmount || 0) : 0,
+        split_gpay: isSplit ? Number(values.splitGPayAmount || 0) : 0,
+        payment_status: "Paid",
+        balance_due: 0,
+        updated_at: new Date().toISOString()
+      };
+
       if (pIndex > -1) {
-        payments[pIndex].amount_collected = values.amountCollected;
-        payments[pIndex].payment_method = values.paymentMethod;
-        payments[pIndex].payment_date = new Date().toISOString().split("T")[0];
-        if (values.paymentMethod === "Split") {
-          payments[pIndex].split_cash = values.splitCashAmount;
-          payments[pIndex].split_gpay = values.splitGPayAmount;
+        try {
+          await localDB.payments.update(payments[pIndex].id, paymentPayload);
+        } catch (e) {
+          console.warn("Direct update failed, saving whole payments list:", e);
+          payments[pIndex] = { ...payments[pIndex], ...paymentPayload };
+          await localDB.payments.save(payments);
         }
-        await localDB.payments.save(payments);
+      } else {
+        // Create payment record if missing
+        const newPayment = {
+          id: generateId(),
+          job_id: job.id,
+          estimated_amount: calculatedBalance.netTotal,
+          advance_paid: advPaid,
+          discount: disc,
+          tax_percentage: taxPct,
+          created_at: new Date().toISOString(),
+          ...paymentPayload
+        };
+        try {
+          await localDB.payments.insert(newPayment);
+        } catch (e) {
+          payments.push(newPayment);
+          await localDB.payments.save(payments);
+        }
       }
       
       return job.id;
@@ -189,7 +276,10 @@ export default function Delivery() {
       queryClient.invalidateQueries({ queryKey: ["deliveryJob"] });
       queryClient.invalidateQueries({ queryKey: ["serviceJobs"] });
       queryClient.invalidateQueries({ queryKey: ["pendingDeliveryFeed"] });
-      toast({ title: "Delivery Processed", description: "Job marked as delivered and payments updated." });
+      queryClient.invalidateQueries({ queryKey: ["allPayments"] });
+      queryClient.invalidateQueries({ queryKey: ["allJobs"] });
+      queryClient.invalidateQueries({ queryKey: ["allExpenses"] });
+      toast({ title: "Delivery Processed", description: "Job marked as delivered and collection recorded in ledger." });
       setActiveJobId(null);
       setSearchBill("");
     },
@@ -201,25 +291,6 @@ export default function Delivery() {
   const onFormSubmit = (data: DeliveryFormValues) => {
     deliveryMutation.mutate(data);
   };
-
-  const estAmt = job?.payments?.estimated_amount || 0;
-  const advPaid = job?.payments?.advance_paid || 0;
-  const amtColl = watch("amountCollected") || 0;
-  const payMeth = watch("paymentMethod") || "Cash";
-  const disc = job?.payments?.discount || 0;
-  const taxPct = job?.payments?.tax_percentage || 0;
-
-  const calculatedBalance = React.useMemo(() => {
-    const subtotal = estAmt - disc;
-    const tax = subtotal * (taxPct / 100);
-    const netTotal = subtotal + tax;
-    const receipts = Number(advPaid) + Number(amtColl);
-    return {
-      netTotal,
-      balance: Math.max(0, netTotal - receipts),
-      status: receipts >= netTotal ? "Paid" : receipts > 0 ? "Partially Paid" : "Unpaid"
-    };
-  }, [estAmt, advPaid, amtColl, disc, taxPct]);
 
   const isAlreadyDelivered = job?.status === "Delivered" || job?.status === "Delivered Return";
 
