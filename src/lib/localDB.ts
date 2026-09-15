@@ -39,6 +39,7 @@ const KNOWN_TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
   expenses: new Set([
     'id', 'type', 'description', 'amount', 'payment_method', 'date',
+    'split_cash', 'split_gpay',
     'created_at', 'updated_at'
   ]),
   attendance: new Set([

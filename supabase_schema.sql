@@ -18,6 +18,8 @@ ALTER TABLE IF EXISTS public.salaries ADD COLUMN IF NOT EXISTS updated_at TIMEST
 
 -- 3. Add missing columns to 'expenses' table
 ALTER TABLE IF EXISTS public.expenses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW());
+ALTER TABLE IF EXISTS public.expenses ADD COLUMN IF NOT EXISTS split_cash NUMERIC(12, 2) DEFAULT 0;
+ALTER TABLE IF EXISTS public.expenses ADD COLUMN IF NOT EXISTS split_gpay NUMERIC(12, 2) DEFAULT 0;
 
 -- 4. Ensure 'attendance' table exists
 CREATE TABLE IF NOT EXISTS public.attendance (
@@ -181,7 +183,9 @@ CREATE TABLE IF NOT EXISTS public.expenses (
   type TEXT NOT NULL DEFAULT 'Expense',      -- 'Expense' or 'Revenue'
   description TEXT NOT NULL,
   amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
-  payment_method TEXT DEFAULT 'Cash',        -- 'Cash', 'GPay', 'Bank Transfer', 'Other'
+  payment_method TEXT DEFAULT 'Cash',        -- 'Cash', 'GPay', 'Split', 'Bank Transfer', 'Other'
+  split_cash NUMERIC(12, 2) DEFAULT 0,
+  split_gpay NUMERIC(12, 2) DEFAULT 0,
   date TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL

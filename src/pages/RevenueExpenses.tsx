@@ -17,19 +17,20 @@ import {
   Calendar, 
   Users, 
   Search, 
-  ArrowDownRight, 
   ArrowUpRight, 
-  Layers,
-  Wallet,
-  Smartphone,
-  TrendingUp
+  Layers, 
+  Wallet, 
+  Smartphone, 
+  TrendingUp 
 } from "lucide-react";
 
 interface ExpenseFormValues {
   type: "Expense" | "Revenue";
   description: string;
   amount: number;
-  paymentMethod: "Cash" | "GPay" | "Bank Transfer" | "Other";
+  paymentMethod: "Cash" | "GPay" | "Split" | "Bank Transfer" | "Other";
+  splitCash?: number;
+  splitGPay?: number;
   date: string;
 }
 
@@ -83,6 +84,8 @@ export default function RevenueExpenses() {
       description: "",
       amount: 0,
       paymentMethod: "Cash",
+      splitCash: 0,
+      splitGPay: 0,
       date: todayStr
     }
   });
@@ -90,13 +93,20 @@ export default function RevenueExpenses() {
   const addExpenseMutation = useMutation({
     mutationFn: async (values: ExpenseFormValues) => {
       const expList = await localDB.expenses.getAll();
+      const isSplit = values.paymentMethod === "Split";
+      const splitCash = Number(values.splitCash) || 0;
+      const splitGPay = Number(values.splitGPay) || 0;
+      const finalAmount = isSplit ? (splitCash + splitGPay) : Number(values.amount);
+
       const newExp = {
         id: generateId(),
         type: values.type,
         description: values.description,
-        amount: Number(values.amount),
+        amount: finalAmount,
         payment_method: values.paymentMethod,
-        date: todayStr,
+        split_cash: isSplit ? splitCash : 0,
+        split_gpay: isSplit ? splitGPay : 0,
+        date: values.date || todayStr,
         created_at: new Date().toISOString()
       };
       expList.push(newExp);
@@ -106,7 +116,15 @@ export default function RevenueExpenses() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allExpenses"] });
       toast({ title: "Entry Recorded", description: "Expense/Revenue successfully logged." });
-      reset({ type: "Expense", description: "", amount: 0, paymentMethod: "Cash", date: todayStr });
+      reset({
+        type: "Expense",
+        description: "",
+        amount: 0,
+        paymentMethod: "Cash",
+        splitCash: 0,
+        splitGPay: 0,
+        date: todayStr
+      });
     }
   });
 
@@ -141,17 +159,36 @@ export default function RevenueExpenses() {
     // 1. Add Expenses / Revenues (Logs)
     expenses.forEach((e: any) => {
       const is_revenue = e.type === "Revenue";
-      const in_amt = is_revenue ? (Number(e.amount) || 0) : 0;
-      const out_amt = is_revenue ? 0 : (Number(e.amount) || 0);
+      const totalAmt = Number(e.amount) || 0;
+      let in_amt = 0;
+      let out_amt = 0;
+
+      if (is_revenue) {
+        in_amt = totalAmt;
+        if (e.payment_method === "GPay" || e.payment_method === "UPI") {
+          out_amt = totalAmt;
+        } else if (e.payment_method === "Split") {
+          out_amt = Number(e.split_gpay) || 0;
+        }
+      } else {
+        out_amt = totalAmt;
+      }
+
+      const summary = is_revenue && e.payment_method === "Split"
+        ? `${e.description} (Split: ₹${Number(e.split_cash) || 0} Cash + ₹${Number(e.split_gpay) || 0} GPay)`
+        : `${e.description} (${e.payment_method || "Cash"})`;
+
       allRows.push({
         id: e.id,
         date: e.date,
         bill_no: "-",
-        summary: `${e.description} (${e.payment_method})`,
+        summary,
         in_amt,
         out_amt,
         is_expense: !is_revenue,
-        payment_method: e.payment_method,
+        payment_method: e.payment_method || "Cash",
+        split_cash: Number(e.split_cash) || 0,
+        split_gpay: Number(e.split_gpay) || 0,
         timestamp: new Date(e.created_at || e.date).getTime()
       });
     });
@@ -168,7 +205,7 @@ export default function RevenueExpenses() {
         const in_amt = Number(p.advance_paid);
         let out_amt = 0;
         
-        if (p.payment_method === "GPay") {
+        if (p.payment_method === "GPay" || p.payment_method === "UPI") {
           out_amt = in_amt;
         } else if (p.payment_method === "Split") {
           out_amt = Number(p.split_gpay) || 0;
@@ -205,7 +242,7 @@ export default function RevenueExpenses() {
         const in_amt = deliveryAmt;
         let out_amt = 0;
         
-        if (p.payment_method === "GPay") {
+        if (p.payment_method === "GPay" || p.payment_method === "UPI") {
           out_amt = in_amt;
         } else if (p.payment_method === "Split") {
           out_amt = Number(p.split_gpay) || 0;
@@ -277,41 +314,56 @@ export default function RevenueExpenses() {
     return { ledger: filteredRows, openingBalance: priorBalance };
   }, [expenses, payments, jobs, salaries, selectedDate, todayStr]);
 
-  // Revenue payment method split-up
-  const revenueSplit = useMemo(() => {
-    let cashIn = 0;
-    let gpayIn = 0;
-    let totalGrossRev = 0;
+  // Financial metrics for the 4 KPI cards
+  const financialSummary = useMemo(() => {
+    // 1. Initial Amount
+    // Detect if an entry was explicitly logged as "Initial Amount", "Initial Cash", or "Opening Cash"
+    const initEntry = ledger.find(r => 
+      !r.is_expense && (
+        r.summary.toLowerCase().includes("initial amount") ||
+        r.summary.toLowerCase().includes("initial cash") ||
+        r.summary.toLowerCase().includes("opening cash")
+      )
+    );
+
+    const hasInitialEntry = Boolean(initEntry);
+    const initialAmount = hasInitialEntry ? initEntry!.in_amt : openingBalance;
+
+    // 2. Total Revenue & Breakdown
+    let totalRevenue = 0;
+    let totalCashRev = 0;
+    let totalGPay = 0;
+    let totalDirectExpense = 0;
 
     ledger.forEach(r => {
       if (!r.is_expense && r.in_amt > 0) {
-        totalGrossRev += r.in_amt;
+        totalRevenue += r.in_amt;
         if (r.payment_method === "Split") {
-          cashIn += (r.split_cash ?? (r.in_amt - r.out_amt));
-          gpayIn += (r.split_gpay ?? r.out_amt);
-        } else if (r.payment_method === "GPay") {
-          gpayIn += r.in_amt;
+          totalCashRev += (r.split_cash ?? (r.in_amt - r.out_amt));
+          totalGPay += (r.split_gpay ?? r.out_amt);
+        } else if (r.payment_method === "GPay" || r.payment_method === "UPI") {
+          totalGPay += r.in_amt;
         } else {
-          cashIn += r.in_amt;
+          totalCashRev += r.in_amt;
         }
+      } else if (r.is_expense && r.out_amt > 0) {
+        totalDirectExpense += r.out_amt;
       }
     });
 
-    return { cashIn, gpayIn, totalGrossRev };
-  }, [ledger]);
+    // 4. Closing Balance = Total Revenue - (Total GPay + Total Expense) (plus Initial Amount if carried over from prior day)
+    const closingBalance = hasInitialEntry 
+      ? (totalRevenue - (totalGPay + totalDirectExpense))
+      : (openingBalance + totalRevenue - (totalGPay + totalDirectExpense));
 
-  // Daily totals
-  const dailyTotals = useMemo(() => {
-    let dayIn = 0;
-    let dayOut = 0;
-    ledger.forEach(r => {
-      dayIn += r.in_amt;
-      dayOut += r.out_amt;
-    });
     return {
-      inflow: dayIn,
-      outflow: dayOut,
-      closing: openingBalance + dayIn - dayOut
+      initialAmount,
+      hasInitialEntry,
+      totalRevenue,
+      totalCashRev,
+      totalGPay,
+      totalDirectExpense,
+      closingBalance
     };
   }, [ledger, openingBalance]);
 
@@ -355,98 +407,79 @@ export default function RevenueExpenses() {
         </div>
       </div>
 
-      {/* KPI Financial Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-            Opening Balance
-          </span>
-          <div className="text-xl font-black font-mono text-foreground">
-            {formatCurrency(openingBalance)}
-          </div>
-          <span className="text-[10px] text-muted-foreground">Prior day carryover</span>
-        </Card>
-
-        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block flex items-center justify-between">
-            <span>Day Inflow</span>
-            <ArrowDownRight className="w-3.5 h-3.5 text-emerald-500" />
-          </span>
-          <div className="text-xl font-black font-mono text-emerald-500">
-            {formatCurrency(dailyTotals.inflow)}
-          </div>
-          <span className="text-[10px] text-muted-foreground">Advances & collections</span>
-        </Card>
-
-        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block flex items-center justify-between">
-            <span>Day Outflow</span>
-            <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
-          </span>
-          <div className="text-xl font-black font-mono text-rose-500">
-            {formatCurrency(dailyTotals.outflow)}
-          </div>
-          <span className="text-[10px] text-muted-foreground">Expenses + GPay transfers</span>
-        </Card>
-
-        <Card className="cockpit-card rounded-2xl p-4 space-y-1">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-            Closing Balance
-          </span>
-          <div className={`text-xl font-black font-mono ${dailyTotals.closing >= 0 ? "text-primary" : "text-rose-600"}`}>
-            {formatCurrency(dailyTotals.closing)}
-          </div>
-          <span className="text-[10px] text-muted-foreground">Actual cash in drawer</span>
-        </Card>
-      </div>
-
-      {/* Revenue Payment Method Split-Up Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between border-emerald-500/20 bg-emerald-500/5">
-          <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
-              Cash Split Revenue
-            </span>
-            <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
-              {formatCurrency(revenueSplit.cashIn)}
-            </div>
-            <span className="text-[10px] text-muted-foreground">Physical cash received</span>
-          </div>
-          <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-            <Wallet className="w-5 h-5" />
-          </div>
-        </Card>
-
-        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between border-blue-500/20 bg-blue-500/5">
-          <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 block">
-              GPay / Online Split
-            </span>
-            <div className="text-2xl font-black font-mono text-blue-600 dark:text-blue-400 mt-0.5">
-              {formatCurrency(revenueSplit.gpayIn)}
-            </div>
-            <span className="text-[10px] text-muted-foreground">Direct online bank credit</span>
-          </div>
-          <div className="p-3 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
-            <Smartphone className="w-5 h-5" />
-          </div>
-        </Card>
-
-        <Card className="cockpit-card rounded-2xl p-4 flex items-center justify-between">
-          <div>
+      {/* 4 Summary KPI Financial Cards (Replacing 7 cards) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* 1. Initial Amount */}
+        <Card className="cockpit-card rounded-2xl p-4 space-y-2 border-border/80 hover:border-primary/40 transition-all">
+          <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-              Total Gross Revenue
+              Initial Amount
             </span>
-            <div className="text-2xl font-black font-mono text-foreground mt-0.5">
-              {formatCurrency(revenueSplit.totalGrossRev)}
+            <div className="p-2 rounded-xl bg-muted text-muted-foreground">
+              <Wallet className="w-4 h-4" />
             </div>
-            <span className="text-[10px] text-muted-foreground">
-              Cash ({revenueSplit.totalGrossRev > 0 ? Math.round((revenueSplit.cashIn / revenueSplit.totalGrossRev) * 100) : 0}%) • GPay ({revenueSplit.totalGrossRev > 0 ? Math.round((revenueSplit.gpayIn / revenueSplit.totalGrossRev) * 100) : 0}%)
+          </div>
+          <div className="text-2xl font-black font-mono text-foreground tracking-tight">
+            {formatCurrency(financialSummary.initialAmount)}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            {financialSummary.hasInitialEntry ? "Morning cash logged in drawer" : "Prior day carryover"}
+          </p>
+        </Card>
+
+        {/* 2. Total Revenue */}
+        <Card className="cockpit-card rounded-2xl p-4 space-y-2 border-emerald-500/20 bg-emerald-500/5 hover:border-emerald-500/40 transition-all">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+              Total Revenue
             </span>
+            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <TrendingUp className="w-4 h-4" />
+            </div>
           </div>
-          <div className="p-3 rounded-xl bg-primary/10 text-primary">
-            <TrendingUp className="w-5 h-5" />
+          <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 tracking-tight">
+            {formatCurrency(financialSummary.totalRevenue)}
           </div>
+          <p className="text-[10px] text-muted-foreground">
+            Cash: {formatCurrency(financialSummary.totalCashRev)} • GPay: {formatCurrency(financialSummary.totalGPay)}
+          </p>
+        </Card>
+
+        {/* 3. Total Expense */}
+        <Card className="cockpit-card rounded-2xl p-4 space-y-2 border-rose-500/20 bg-rose-500/5 hover:border-rose-500/40 transition-all">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500 block">
+              Total Expense
+            </span>
+            <div className="p-2 rounded-xl bg-rose-500/10 text-rose-500">
+              <ArrowUpRight className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black font-mono text-rose-500 tracking-tight">
+            {formatCurrency(financialSummary.totalDirectExpense)}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Direct shop outflows & payroll
+          </p>
+        </Card>
+
+        {/* 4. Closing Balance */}
+        <Card className="cockpit-card rounded-2xl p-4 space-y-2 border-primary/30 bg-primary/5 hover:border-primary/60 transition-all">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-primary block">
+              Closing Balance
+            </span>
+            <div className="p-2 rounded-xl bg-primary/10 text-primary">
+              <Layers className="w-4 h-4" />
+            </div>
+          </div>
+          <div className={`text-2xl font-black font-mono tracking-tight ${financialSummary.closingBalance >= 0 ? "text-primary" : "text-rose-600"}`}>
+            {formatCurrency(financialSummary.closingBalance)}
+          </div>
+          <p className="text-[10px] text-muted-foreground flex items-center justify-between">
+            <span>Cash in drawer</span>
+            <span className="font-mono text-[9px] opacity-75">Rev - (GPay + Exp)</span>
+          </p>
         </Card>
       </div>
 
@@ -644,7 +677,12 @@ export default function RevenueExpenses() {
                     <Button 
                       type="button" 
                       variant={watch("type") === "Expense" ? "default" : "outline"} 
-                      onClick={() => setValue("type", "Expense")}
+                      onClick={() => {
+                        setValue("type", "Expense");
+                        if (watch("paymentMethod") === "Split") {
+                          setValue("paymentMethod", "Cash");
+                        }
+                      }}
                       className={`h-9 text-xs font-bold rounded-xl ${watch("type") === "Expense" ? "bg-rose-600 hover:bg-rose-700 text-white" : ""}`}
                     >
                       Expense (Out)
@@ -664,19 +702,8 @@ export default function RevenueExpenses() {
                   <label className="text-xs font-semibold block mb-1">Description / Particulars</label>
                   <Input 
                     {...register("description", { required: true })} 
-                    placeholder="e.g. Shop electricity, tea, tools"
+                    placeholder="e.g. Initial Amount, Scrap sales, tea, tools"
                     className="h-10 text-xs rounded-xl"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold block mb-1">Amount (₹)</label>
-                  <Input 
-                    type="number"
-                    step="any"
-                    {...register("amount", { required: true, min: 1 })} 
-                    placeholder="0.00"
-                    className="h-10 text-sm font-mono font-bold rounded-xl"
                   />
                 </div>
 
@@ -688,10 +715,81 @@ export default function RevenueExpenses() {
                   >
                     <option value="Cash">Cash</option>
                     <option value="GPay">GPay / UPI</option>
+                    {watch("type") === "Revenue" && (
+                      <option value="Split">Split (Cash + GPay)</option>
+                    )}
                     <option value="Bank Transfer">Bank Transfer</option>
                     <option value="Other">Other</option>
                   </select>
                 </div>
+
+                {watch("paymentMethod") === "Split" ? (
+                  <div className="p-3.5 rounded-xl bg-muted/40 border border-border/80 space-y-3 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                        <Smartphone className="w-3.5 h-3.5 text-blue-500" />
+                        Split Revenue Breakdown
+                      </span>
+                      <Badge variant="outline" className="text-[10px] font-mono font-bold text-primary border-primary/20 bg-primary/5">
+                        Total: {formatCurrency((Number(watch("splitCash")) || 0) + (Number(watch("splitGPay")) || 0))}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-muted-foreground block mb-1">
+                          Cash Portion (₹)
+                        </label>
+                        <Input 
+                          type="number"
+                          step="any"
+                          {...register("splitCash", {
+                            valueAsNumber: true,
+                            onChange: (e) => {
+                              const cash = Number(e.target.value) || 0;
+                              const gpay = Number(watch("splitGPay")) || 0;
+                              setValue("amount", cash + gpay);
+                            }
+                          })}
+                          placeholder="0.00"
+                          className="h-9 text-xs font-mono font-bold rounded-xl"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-muted-foreground block mb-1">
+                          GPay Portion (₹)
+                        </label>
+                        <Input 
+                          type="number"
+                          step="any"
+                          {...register("splitGPay", {
+                            valueAsNumber: true,
+                            onChange: (e) => {
+                              const gpay = Number(e.target.value) || 0;
+                              const cash = Number(watch("splitCash")) || 0;
+                              setValue("amount", cash + gpay);
+                            }
+                          })}
+                          placeholder="0.00"
+                          className="h-9 text-xs font-mono font-bold rounded-xl"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Full amount of <span className="font-mono font-bold text-foreground">{formatCurrency((Number(watch("splitCash")) || 0) + (Number(watch("splitGPay")) || 0))}</span> enters Revenue (Inflow), and <span className="font-mono font-bold text-blue-500">{formatCurrency(Number(watch("splitGPay")) || 0)}</span> is deducted in Outflow/Expense.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-xs font-semibold block mb-1">Amount (₹)</label>
+                    <Input 
+                      type="number"
+                      step="any"
+                      {...register("amount", { required: true, min: 1 })} 
+                      placeholder="0.00"
+                      className="h-10 text-sm font-mono font-bold rounded-xl"
+                    />
+                  </div>
+                )}
 
                 <Button 
                   type="submit" 
@@ -721,6 +819,16 @@ export default function RevenueExpenses() {
                       <div>
                         <p className="font-bold text-foreground">{item.description}</p>
                         <p className="text-[10px] text-muted-foreground">{item.payment_method} • {item.type}</p>
+                        {item.payment_method === "Split" && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <Badge variant="outline" className="text-[9px] font-mono text-emerald-600 bg-emerald-500/10 border-emerald-500/20">
+                              Cash: {formatCurrency(item.split_cash || 0)}
+                            </Badge>
+                            <Badge variant="outline" className="text-[9px] font-mono text-blue-600 bg-blue-500/10 border-blue-500/20">
+                              GPay: {formatCurrency(item.split_gpay || 0)}
+                            </Badge>
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <span className={`font-mono font-bold ${item.type === "Revenue" ? "text-emerald-500" : "text-rose-500"}`}>
