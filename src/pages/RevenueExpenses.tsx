@@ -77,6 +77,7 @@ export default function RevenueExpenses() {
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"ledger" | "expense_form">("ledger");
+  const [logViewFilter, setLogViewFilter] = useState<"for_date" | "all">("for_date");
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<ExpenseFormValues>({
     defaultValues: {
@@ -90,6 +91,14 @@ export default function RevenueExpenses() {
     }
   });
 
+  const formDate = watch("date") || todayStr;
+
+  const openEntryFormForDate = (dateToUse?: string) => {
+    const targetDate = dateToUse || (selectedDate !== "ALL" ? selectedDate : todayStr);
+    setValue("date", targetDate);
+    setActiveTab("expense_form");
+  };
+
   const addExpenseMutation = useMutation({
     mutationFn: async (values: ExpenseFormValues) => {
       const expList = await localDB.expenses.getAll();
@@ -97,6 +106,7 @@ export default function RevenueExpenses() {
       const splitCash = Number(values.splitCash) || 0;
       const splitGPay = Number(values.splitGPay) || 0;
       const finalAmount = isSplit ? (splitCash + splitGPay) : Number(values.amount);
+      const chosenDate = values.date || todayStr;
 
       const newExp = {
         id: generateId(),
@@ -106,16 +116,20 @@ export default function RevenueExpenses() {
         payment_method: values.paymentMethod,
         split_cash: isSplit ? splitCash : 0,
         split_gpay: isSplit ? splitGPay : 0,
-        date: values.date || todayStr,
+        date: chosenDate,
         created_at: new Date().toISOString()
       };
       expList.push(newExp);
       await localDB.expenses.save(expList);
       return newExp;
     },
-    onSuccess: () => {
+    onSuccess: (newExp) => {
       queryClient.invalidateQueries({ queryKey: ["allExpenses"] });
-      toast({ title: "Entry Recorded", description: "Expense/Revenue successfully logged." });
+      toast({ 
+        title: "Entry Recorded", 
+        description: `${newExp.type} of ₹${newExp.amount} successfully logged for ${newExp.date}.` 
+      });
+      const activeDate = watch("date");
       reset({
         type: "Expense",
         description: "",
@@ -123,7 +137,7 @@ export default function RevenueExpenses() {
         paymentMethod: "Cash",
         splitCash: 0,
         splitGPay: 0,
-        date: todayStr
+        date: activeDate || (selectedDate !== "ALL" ? selectedDate : todayStr)
       });
     }
   });
@@ -308,7 +322,11 @@ export default function RevenueExpenses() {
       filteredRows = allRows.filter(row => row.date === selectedDate);
       filteredRows.sort((a, b) => a.timestamp - b.timestamp);
     } else {
-      filteredRows = [...allRows].sort((a, b) => b.timestamp - a.timestamp);
+      filteredRows = [...allRows].sort((a, b) => {
+        const dateComp = (b.date || "").localeCompare(a.date || "");
+        if (dateComp !== 0) return dateComp;
+        return b.timestamp - a.timestamp;
+      });
     }
 
     return { ledger: filteredRows, openingBalance: priorBalance };
@@ -366,6 +384,22 @@ export default function RevenueExpenses() {
       closingBalance
     };
   }, [ledger, openingBalance]);
+
+  // Logs for Tab 2 side panel (Filtered for active entry date or all recent)
+  const displayedExpenses = useMemo(() => {
+    if (logViewFilter === "for_date") {
+      return expenses
+        .filter((e: any) => e.date === formDate)
+        .sort((a: any, b: any) => new Date(b.created_at || b.date).getTime() - new Date(a.created_at || a.date).getTime());
+    }
+    return [...expenses]
+      .sort((a: any, b: any) => {
+        const dateComp = (b.date || "").localeCompare(a.date || "");
+        if (dateComp !== 0) return dateComp;
+        return new Date(b.created_at || b.date).getTime() - new Date(a.created_at || a.date).getTime();
+      })
+      .slice(0, 40);
+  }, [expenses, formDate, logViewFilter]);
 
   return (
     <div className="space-y-6 max-w-[1300px] mx-auto pb-16">
@@ -498,7 +532,12 @@ export default function RevenueExpenses() {
         </button>
 
         <button
-          onClick={() => setActiveTab("expense_form")}
+          onClick={() => {
+            setActiveTab("expense_form");
+            if (selectedDate !== "ALL") {
+              setValue("date", selectedDate);
+            }
+          }}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
             activeTab === "expense_form"
               ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
@@ -528,14 +567,27 @@ export default function RevenueExpenses() {
             <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
               Transactions on {selectedDate} ({ledger.length} Entries)
             </span>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground" />
-              <Input 
-                placeholder="Search ledger..." 
-                value={ledgerSearch}
-                onChange={(e) => setLedgerSearch(e.target.value)}
-                className="h-8 pl-8 text-xs rounded-xl"
-              />
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input 
+                  placeholder="Search ledger..." 
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  className="h-8 pl-8 text-xs rounded-xl"
+                />
+              </div>
+              <Button
+                size="sm"
+                onClick={() => openEntryFormForDate(selectedDate !== "ALL" ? selectedDate : todayStr)}
+                className="h-8 text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
+                title={`Record entry for ${selectedDate !== "ALL" ? selectedDate : "today"}`}
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">
+                  {selectedDate === "ALL" || selectedDate === todayStr ? "Add Entry" : `Add for ${selectedDate}`}
+                </span>
+              </Button>
             </div>
           </div>
 
@@ -671,6 +723,63 @@ export default function RevenueExpenses() {
             </CardHeader>
             <CardContent className="p-5">
               <form onSubmit={handleSubmit(onAddExpense)} className="space-y-4">
+                {/* Transaction Date Field */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-primary" />
+                      Transaction Date
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => setValue("date", todayStr)}
+                        className={`h-6 px-2 text-[10px] font-bold rounded-lg ${formDate === todayStr ? "border-primary text-primary bg-primary/5" : "text-muted-foreground"}`}
+                      >
+                        Today
+                      </Button>
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() - 1);
+                          setValue("date", d.toISOString().split("T")[0]);
+                        }}
+                        className={`h-6 px-2 text-[10px] font-bold rounded-lg ${
+                          (() => {
+                            const d = new Date();
+                            d.setDate(d.getDate() - 1);
+                            return formDate === d.toISOString().split("T")[0];
+                          })() ? "border-primary text-primary bg-primary/5" : "text-muted-foreground"
+                        }`}
+                      >
+                        Yesterday
+                      </Button>
+                    </div>
+                  </div>
+                  <Input 
+                    type="date" 
+                    {...register("date", { required: true })} 
+                    className="h-10 text-xs font-mono font-bold rounded-xl"
+                  />
+                  {formDate < todayStr && (
+                    <div className="mt-1.5 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-[11px] font-medium flex items-center gap-1.5">
+                      <span>⚠️</span>
+                      <span>Recording entry for past date: <strong className="font-mono font-bold">{formDate}</strong></span>
+                    </div>
+                  )}
+                  {formDate > todayStr && (
+                    <div className="mt-1.5 p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400 text-[11px] font-medium flex items-center gap-1.5">
+                      <span>ℹ️</span>
+                      <span>Recording entry for future date: <strong className="font-mono font-bold">{formDate}</strong></span>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <label className="text-xs font-semibold block mb-1">Transaction Category</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -805,20 +914,58 @@ export default function RevenueExpenses() {
           {/* Recent Daily Logs List */}
           <div className="lg:col-span-2">
             <Card className="cockpit-card rounded-2xl overflow-hidden">
-              <div className="p-4 border-b border-border/60 bg-muted/20">
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Today's Recorded Logs ({expenses.filter((e: any) => e.date === todayStr).length})
-                </span>
+              <div className="p-4 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    {logViewFilter === "for_date"
+                      ? `Logs for ${formDate} (${expenses.filter((e: any) => e.date === formDate).length})`
+                      : `All Recent Logs (${expenses.length})`}
+                  </span>
+                  {formDate !== todayStr && logViewFilter === "for_date" && (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+                      Showing records for past date: {formDate}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={logViewFilter === "for_date" ? "default" : "ghost"}
+                    onClick={() => setLogViewFilter("for_date")}
+                    className="h-7 text-[10px] font-bold px-2.5 rounded-lg"
+                  >
+                    {formDate === todayStr ? "Today" : formDate}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={logViewFilter === "all" ? "default" : "ghost"}
+                    onClick={() => setLogViewFilter("all")}
+                    className="h-7 text-[10px] font-bold px-2.5 rounded-lg"
+                  >
+                    All Recent
+                  </Button>
+                </div>
               </div>
-              <div className="p-4 space-y-2">
-                {expenses.filter((e: any) => e.date === todayStr).length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-8">No custom entries logged today.</p>
+              <div className="p-4 space-y-2 max-h-[600px] overflow-y-auto">
+                {displayedExpenses.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-8">
+                    {logViewFilter === "for_date" 
+                      ? `No custom entries logged for ${formDate}.` 
+                      : "No entries recorded yet."}
+                  </p>
                 ) : (
-                  expenses.filter((e: any) => e.date === todayStr).map((item: any) => (
+                  displayedExpenses.map((item: any) => (
                     <div key={item.id} className="p-3 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs">
                       <div>
-                        <p className="font-bold text-foreground">{item.description}</p>
-                        <p className="text-[10px] text-muted-foreground">{item.payment_method} • {item.type}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold text-foreground">{item.description}</p>
+                          <Badge variant="outline" className={`text-[9px] font-mono font-bold ${item.date !== todayStr ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" : "bg-muted"}`}>
+                            {item.date}
+                          </Badge>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{item.payment_method} • {item.type}</p>
                         {item.payment_method === "Split" && (
                           <div className="flex items-center gap-1.5 mt-1">
                             <Badge variant="outline" className="text-[9px] font-mono text-emerald-600 bg-emerald-500/10 border-emerald-500/20">
