@@ -334,20 +334,24 @@ export default function RevenueExpenses() {
 
   // Financial metrics for the 4 KPI cards
   const financialSummary = useMemo(() => {
-    // 1. Initial Amount
-    // Detect if an entry was explicitly logged as "Initial Amount", "Initial Cash", or "Opening Cash"
-    const initEntry = ledger.find(r => 
-      !r.is_expense && (
-        r.summary.toLowerCase().includes("initial amount") ||
-        r.summary.toLowerCase().includes("initial cash") ||
-        r.summary.toLowerCase().includes("opening cash")
-      )
-    );
+    // Helper to detect if an entry was explicitly logged as "Initial Amount", "Initial Cash", "Opening Cash", etc.
+    const isInitialEntry = (summary: string = "") => {
+      const lower = summary.toLowerCase();
+      return (
+        lower.includes("initial amount") ||
+        lower.includes("initial cash") ||
+        lower.includes("opening cash") ||
+        lower.includes("opening balance") ||
+        lower.includes("initial balance")
+      );
+    };
 
+    // 1. Initial Amount
+    const initEntry = ledger.find(r => !r.is_expense && isInitialEntry(r.summary));
     const hasInitialEntry = Boolean(initEntry);
     const initialAmount = hasInitialEntry ? initEntry!.in_amt : openingBalance;
 
-    // 2. Total Revenue & Breakdown
+    // 2. Total Revenue & Breakdown (STRICTLY EXCLUDING initial amount / opening cash)
     let totalRevenue = 0;
     let totalCashRev = 0;
     let totalGPay = 0;
@@ -355,24 +359,24 @@ export default function RevenueExpenses() {
 
     ledger.forEach(r => {
       if (!r.is_expense && r.in_amt > 0) {
-        totalRevenue += r.in_amt;
-        if (r.payment_method === "Split") {
-          totalCashRev += (r.split_cash ?? (r.in_amt - r.out_amt));
-          totalGPay += (r.split_gpay ?? r.out_amt);
-        } else if (r.payment_method === "GPay" || r.payment_method === "UPI") {
-          totalGPay += r.in_amt;
-        } else {
-          totalCashRev += r.in_amt;
+        if (!isInitialEntry(r.summary)) {
+          totalRevenue += r.in_amt;
+          if (r.payment_method === "Split") {
+            totalCashRev += (r.split_cash ?? (r.in_amt - r.out_amt));
+            totalGPay += (r.split_gpay ?? r.out_amt);
+          } else if (r.payment_method === "GPay" || r.payment_method === "UPI") {
+            totalGPay += r.in_amt;
+          } else {
+            totalCashRev += r.in_amt;
+          }
         }
       } else if (r.is_expense && r.out_amt > 0) {
         totalDirectExpense += r.out_amt;
       }
     });
 
-    // 4. Closing Balance = Total Revenue - (Total GPay + Total Expense) (plus Initial Amount if carried over from prior day)
-    const closingBalance = hasInitialEntry 
-      ? (totalRevenue - (totalGPay + totalDirectExpense))
-      : (openingBalance + totalRevenue - (totalGPay + totalDirectExpense));
+    // 4. Closing Balance (Cash in Drawer) = Initial Amount + Total Revenue - (Total GPay + Total Expense)
+    const closingBalance = initialAmount + totalRevenue - (totalGPay + totalDirectExpense);
 
     return {
       initialAmount,

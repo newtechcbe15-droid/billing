@@ -21,10 +21,13 @@ import {
   Users,
   Wallet,
   Smartphone,
-  BarChart3
+  BarChart3,
+  Trash2,
+  Loader2
 } from "lucide-react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { InvoicePrint } from "@/components/service-job/InvoicePrint";
+import { useServiceJobs } from "@/hooks/useServiceJobs";
 
 const STATUS_COLOR_MAP: Record<string, string> = {
   Collected: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
@@ -139,6 +142,8 @@ export default function Reports() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [printJob, setPrintJob] = useState<any | null>(null);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [jobToDelete, setJobToDelete] = useState<any | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   // Sync URL search param
   useEffect(() => {
@@ -172,6 +177,8 @@ export default function Reports() {
   });
 
   const queryClient = useQueryClient();
+  const { useDeleteJobMutation } = useServiceJobs();
+  const deleteJobMutation = useDeleteJobMutation();
 
   const statusMutation = useMutation({
     mutationFn: async ({ id, status, reason }: { id: string, status: string, reason?: string }) => {
@@ -203,6 +210,21 @@ export default function Reports() {
   const handleOpenPrint = (job: any) => {
     setPrintJob(job);
     setIsPrintModalOpen(true);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!jobToDelete) return;
+    deleteJobMutation.mutate(jobToDelete.id, {
+      onSuccess: () => {
+        setIsDeleteDialogOpen(false);
+        setJobToDelete(null);
+        if (selectedJob?.id === jobToDelete.id) {
+          setIsModalOpen(false);
+          setSelectedJob(null);
+        }
+        queryClient.invalidateQueries({ queryKey: ["reportsLedgerMaster"] });
+      }
+    });
   };
 
   // Filter records
@@ -781,6 +803,18 @@ export default function Reports() {
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => {
+                              setJobToDelete(job);
+                              setIsDeleteDialogOpen(true);
+                            }}
+                            className="h-7 w-7 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                            title="Delete Service Job"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -854,17 +888,32 @@ export default function Reports() {
               )}
             </div>
           )}
-          <DialogFooter className="mt-2">
-            <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
-              Close
-            </Button>
-            <Button 
-              size="sm" 
-              onClick={() => { setIsModalOpen(false); navigate(`/edit-job/${selectedJob?.id}`); }}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
+          <DialogFooter className="mt-2 flex flex-row items-center justify-between sm:justify-between w-full">
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                setJobToDelete(selectedJob);
+                setIsDeleteDialogOpen(true);
+              }}
+              className="gap-1.5 font-bold text-xs"
             >
-              Edit Ticket
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Ticket</span>
             </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
+                Close
+              </Button>
+              <Button 
+                size="sm" 
+                onClick={() => { setIsModalOpen(false); navigate(`/edit-job/${selectedJob?.id}`); }}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
+              >
+                Edit Ticket
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -920,6 +969,74 @@ export default function Reports() {
             <Button variant="outline" onClick={() => setIsPrintModalOpen(false)}>Close</Button>
             <Button onClick={() => window.print()} className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold">
               <Printer className="w-4 h-4 mr-1.5" /> Print Now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Service Job Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-black uppercase text-destructive flex items-center gap-2">
+              <Trash2 className="w-4 h-4" />
+              <span>Delete Service Job #{jobToDelete?.bill_number}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <p className="text-muted-foreground leading-relaxed">
+              Are you sure you want to permanently delete this service job from the registry?
+            </p>
+            {jobToDelete && (
+              <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-xl space-y-1">
+                <p className="font-bold text-foreground">
+                  Customer: <span className="font-normal">{jobToDelete.customers?.name || "Client"} ({jobToDelete.customers?.mobile_number || "N/A"})</span>
+                </p>
+                <p className="font-bold text-foreground">
+                  Device: <span className="font-normal">{jobToDelete.brand} {jobToDelete.model} ({jobToDelete.device_type})</span>
+                </p>
+                <p className="font-bold text-foreground">
+                  Defect: <span className="font-normal">{jobToDelete.complaint}</span>
+                </p>
+                <p className="text-[11px] text-destructive font-semibold pt-1">
+                  Warning: Deleting this job will also remove its associated payment ledger and warranty entries. This action cannot be reversed.
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex flex-row justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={deleteJobMutation.isPending}
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setJobToDelete(null);
+              }}
+              className="text-xs font-semibold rounded-xl"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={deleteJobMutation.isPending}
+              onClick={handleConfirmDelete}
+              className="text-xs font-bold gap-1.5 rounded-xl shadow-xs"
+            >
+              {deleteJobMutation.isPending ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Deleting...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Yes, Delete Job</span>
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

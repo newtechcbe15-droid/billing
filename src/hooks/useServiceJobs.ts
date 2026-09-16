@@ -200,9 +200,12 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
         payments.push(newPayment);
         await localDB.payments.save(payments);
 
-        // Increment next bill number
+        // Automatically update next bill number sequence to next consecutive number
+        const billDigits = values.billNumber ? values.billNumber.match(/\d+$/) : null;
+        const currentNum = billDigits ? parseInt(billDigits[0], 10) : 0;
         const settings = await localDB.settings.get();
-        settings.next_bill_number = (settings.next_bill_number || 1) + 1;
+        const nextNum = currentNum > 0 ? currentNum + 1 : ((settings.next_bill_number || 1) + 1);
+        settings.next_bill_number = nextNum;
         await localDB.settings.save(settings);
 
         return newJob;
@@ -245,6 +248,7 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
         if (jIndex > -1) {
           jobs[jIndex] = {
             ...jobs[jIndex],
+            bill_number: values.billNumber,
             updated_at: new Date().toISOString(),
             device_type: values.deviceType,
             brand: values.brand,
@@ -275,12 +279,27 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
           };
           await localDB.payments.save(payments);
         }
+
+        // If updated bill number sequence is higher, advance settings.next_bill_number
+        if (values.billNumber) {
+          const match = values.billNumber.match(/\d+$/);
+          if (match) {
+            const currentNum = parseInt(match[0], 10);
+            const settings = await localDB.settings.get();
+            if (currentNum >= (settings.next_bill_number || 1)) {
+              settings.next_bill_number = currentNum + 1;
+              await localDB.settings.save(settings);
+              queryClient.invalidateQueries({ queryKey: ["nextBillNumber"] });
+            }
+          }
+        }
         
         return id;
       },
       onSuccess: (_, variables) => {
         queryClient.invalidateQueries({ queryKey: ["serviceJobs"] });
         queryClient.invalidateQueries({ queryKey: ["serviceJob", variables.id] });
+        queryClient.invalidateQueries({ queryKey: ["dashboardMetricsMaster"] });
         toast({ title: "Ticket Updated", description: "Job ticket and ledger matrices updated cleanly." });
       },
       onError: (err: Error) => {
@@ -305,11 +324,56 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
       onSuccess: (_, variables) => {
         queryClient.invalidateQueries({ queryKey: ["serviceJobs"] });
         queryClient.invalidateQueries({ queryKey: ["serviceJob", variables.id] });
+        queryClient.invalidateQueries({ queryKey: ["dashboardMetricsMaster"] });
         queryClient.invalidateQueries({ queryKey: ["dashboardMetrics"] });
         toast({ title: "Pipeline Mutated", description: `Ticket transition state updated to: ${variables.status}` });
       },
       onError: (err: Error) => {
         toast({ variant: "destructive", title: "Mutation Refused", description: err.message });
+      },
+    });
+  };
+
+  const useDeleteJobMutation = () => {
+    return useMutation({
+      mutationKey: ["deleteServiceJob"],
+      mutationFn: async (jobId: string) => {
+        // Cascade delete payments and warranties associated with this job
+        const payments = await localDB.payments.getAll();
+        const paymentsToDelete = payments.filter((p: any) => p.job_id === jobId);
+        for (const p of paymentsToDelete) {
+          try {
+            await localDB.payments.delete(p.id);
+          } catch (e) {
+            console.warn("Failed to delete linked payment", e);
+          }
+        }
+
+        const warranties = await localDB.warranties.getAll();
+        const warrantiesToDelete = warranties.filter((w: any) => w.job_id === jobId);
+        for (const w of warrantiesToDelete) {
+          try {
+            await localDB.warranties.delete(w.id);
+          } catch (e) {
+            console.warn("Failed to delete linked warranty", e);
+          }
+        }
+
+        // Delete job record
+        await localDB.jobs.delete(jobId);
+        return jobId;
+      },
+      onSuccess: (_, deletedId) => {
+        queryClient.invalidateQueries({ queryKey: ["serviceJobs"] });
+        queryClient.invalidateQueries({ queryKey: ["serviceJob", deletedId] });
+        queryClient.invalidateQueries({ queryKey: ["reportsLedgerMaster"] });
+        queryClient.invalidateQueries({ queryKey: ["dashboardMetricsMaster"] });
+        queryClient.invalidateQueries({ queryKey: ["dashboardMetrics"] });
+        queryClient.invalidateQueries({ queryKey: ["pendingDeliveryFeed"] });
+        toast({ title: "Ticket Deleted", description: "The service ticket and associated records have been removed." });
+      },
+      onError: (err: Error) => {
+        toast({ variant: "destructive", title: "Deletion Failed", description: err.message });
       },
     });
   };
@@ -321,5 +385,6 @@ export function useServiceJobs(filters: JobFilterParams = {}) {
     useCreateJobMutation,
     useUpdateFullJobMutation,
     useUpdateJobStatusMutation,
+    useDeleteJobMutation,
   };
 }

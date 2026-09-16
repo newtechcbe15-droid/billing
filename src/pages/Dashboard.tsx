@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { localDB } from "@/lib/localDB";
 import { StatCards } from "@/components/dashboard/StatCards";
+import { FinancialCockpit } from "@/components/dashboard/FinancialCockpit";
 import { RecentJobsTable } from "@/components/dashboard/RecentJobsTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,8 @@ export default function Dashboard() {
       const rawPayments = await localDB.payments.getAll();
       const rawWarranties = await localDB.warranties.getAll();
       const rawCustomers = await localDB.customers.getAll();
+      const rawExpenses = await localDB.expenses.getAll();
+      const rawSalaries = await localDB.salaries.getAll();
 
       const paymentsMap = new Map(rawPayments.map((p: any) => [p.job_id, p]));
       const warrantyMap = new Map(rawWarranties.map((w: any) => [w.job_id, w]));
@@ -77,10 +80,41 @@ export default function Dashboard() {
         }
       });
 
+      // Helper to identify initial cash / opening cash entries
+      const isInitialCashEntry = (desc: string = "") => {
+        const lower = desc.toLowerCase().trim();
+        return (
+          lower.includes("initial amount") ||
+          lower.includes("initial cash") ||
+          lower.includes("opening cash") ||
+          lower.includes("opening balance") ||
+          lower.includes("initial balance")
+        );
+      };
+
+      // Include direct revenues in top metrics (STRICTLY EXCLUDING initial cash / opening cash)
+      rawExpenses.forEach((e: any) => {
+        if (e.type === "Revenue" && e.date && !isInitialCashEntry(e.description)) {
+          const isSplit = e.payment_method === "Split";
+          const revAmt = isSplit 
+            ? ((Number(e.split_cash) || 0) + (Number(e.split_gpay) || 0)) 
+            : (Number(e.amount) || 0);
+          if (e.date === todayISO) {
+            todayRevenueSum += revAmt;
+          }
+          if (e.date >= startOfMonthISO && e.date <= todayISO) {
+            monthlyRevenueSum += revAmt;
+          }
+        }
+      });
+
       const pendingDeliveryJobs = fullUnifiedJobs.filter((j: any) => j.status === "Ready" || j.status === "Completed");
 
       return {
         jobsList: fullUnifiedJobs,
+        paymentsList: rawPayments,
+        expensesList: rawExpenses,
+        salariesList: rawSalaries,
         metrics: {
           totalJobs: fullUnifiedJobs.length,
           todayJobs: todayJobsCount,
@@ -169,7 +203,16 @@ export default function Dashboard() {
         isLoading={skeletonView} 
       />
 
-      {/* SECTION 3: FULL JOB LIST PIPELINE */}
+      {/* SECTION 3: FINANCIAL PERFORMANCE COCKPIT (MONTH-WISE & YEAR-WISE) */}
+      <FinancialCockpit
+        jobs={dashboardPayload?.jobsList || []}
+        payments={dashboardPayload?.paymentsList || []}
+        expenses={dashboardPayload?.expensesList || []}
+        salaries={dashboardPayload?.salariesList || []}
+        isLoading={skeletonView}
+      />
+
+      {/* SECTION 4: FULL JOB LIST PIPELINE */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
