@@ -297,7 +297,9 @@ export default function Invoice() {
               <text x="815" y="85" textAnchor="middle" dominantBaseline="central" fill="#ffffff" fontFamily="'Space Grotesk', sans-serif" fontSize="42" fontWeight="700" letterSpacing="4">INVOICE</text>
             </svg>
             <div className="brand">
-              <img src="/logo.png" alt="New Technology Logo" style={{ maxHeight: '86px', objectFit: 'contain' }} />
+              <div className="brand-text">
+                <h1>NEW TECHNOLOGY</h1>
+              </div>
             </div>
           </div>
           <div className="green-bar"></div>
